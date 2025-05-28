@@ -1,0 +1,12 @@
+typer
+
+torch
+onnx
+onnxruntime
+
+# ./braindance[rt-sort]
+-e file:./braindance[rt-sort]
+
+ipython
+jupyter
+debugpy
