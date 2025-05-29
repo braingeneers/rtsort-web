@@ -19,14 +19,6 @@
         "${workspaceFolder}/checkpoints/spikedetector/mea",
         "${workspaceFolder}/models/detect-mea.onnx"
       ]
-    },
-    {
-      "name": "Python: Jupyter Notebook",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${file}",
-      "console": "integratedTerminal",
-      "justMyCode": false
     }
   ]
 }
