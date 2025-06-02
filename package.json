@@ -1,0 +1,18 @@
+{
+  "type": "module",
+  "name": "detect-ts",
+  "version": "1.0.0",
+  "description": "TypeScript ONNX spike detection inference",
+  "main": "detect.ts",
+  "scripts": {
+    "build": "tsc detect.ts",
+    "run": "node detect.js"
+  },
+  "dependencies": {
+    "onnxruntime-node": "^1.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -1,4 +1,7 @@
 venv/
+node_modules/
+debug/
+validation/
 
 checkpoints/
 data/
