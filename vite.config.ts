@@ -9,7 +9,7 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['onnxruntime-web'],
   },
-  base: './', // Relative base path so we can live anywhere
+  base: '/rtsort-web/', // For gh-pages
   server: {
     cors: true,
     watch: {
