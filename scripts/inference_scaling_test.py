@@ -27,7 +27,7 @@ def comprehensive_test():
     )
 
     # ONNX computation
-    session = ort.InferenceSession("models/inference_scaling.onnx")
+    session = ort.InferenceSession("public/models/inference_scaling.onnx")
     onnx_result = session.run(
         ["inference_scaling"],
         {

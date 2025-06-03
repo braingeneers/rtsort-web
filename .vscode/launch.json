@@ -20,6 +20,15 @@
         "${workspaceFolder}/checkpoints/spikedetector/mea",
         "${workspaceFolder}/models/detect-mea.onnx"
       ]
-    }
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Launch Chrome against localhost",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}",
+      "port": 9222,
+      "runtimeArgs": ["--remote-debugging-port=9222"]
+    },
   ]
 }

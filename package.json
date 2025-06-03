@@ -1,18 +1,29 @@
 {
+  "name": "rtsort-web",
+  "private": true,
   "type": "module",
-  "name": "detect-ts",
-  "version": "1.0.0",
-  "description": "TypeScript ONNX spike detection inference",
-  "main": "detect.ts",
+  "version": "0.0.0",
   "scripts": {
-    "build": "tsc detect.ts",
-    "run": "node detect.js"
+    "dev": "vite",
+    "build": "run-p type-check \"build-only {@}\" --",
+    "preview": "vite preview",
+    "build-only": "vite build",
+    "type-check": "vue-tsc --build --force"
   },
   "dependencies": {
-    "onnxruntime-node": "^1.16.0"
+    "@fontsource/roboto": "5.2.5",
+    "@mdi/font": "7.4.47",
+    "onnxruntime-web": "^1.22.0",
+    "vue": "^3.5.13",
+    "vuetify": "^3.8.1"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "@tsconfig/node22": "^22.0.2",
+    "@vitejs/plugin-vue": "^5.2.3",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.2",
+    "vite-plugin-static-copy": "^3.0.0",
+    "vite-plugin-vuetify": "^2.1.1",
+    "vue-tsc": "^2.2.8"
   }
 }

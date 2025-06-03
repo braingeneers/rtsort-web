@@ -3,6 +3,16 @@ node_modules/
 debug/
 validation/
 
+dist/
+
 checkpoints/
 data/
 braindance/
+
+.DS_Store
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
