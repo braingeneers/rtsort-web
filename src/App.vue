@@ -1,5 +1,5 @@
 <template>
-  <v-app>
+  <v-app theme="dark">
     <v-main>
       <v-container>
         <h1>RT-Sort Web</h1>
