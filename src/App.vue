@@ -33,7 +33,11 @@ function initializeWorkers() {
       const result = event.data.result
       console.log('Received result:', result)
       console.log(`Expected value: 0.3761194050`)
-      console.log(`Match: ${Math.abs(result - 0.376119405) < 1e-6 ? '✅ PERFECT' : '❌ FAILED'}`)
+      console.log(
+        `Match: ${
+          Math.abs(result.inferenceScaling - 0.376119405) < 1e-6 ? '✅ PERFECT' : '❌ FAILED'
+        }`
+      )
     }
   }
 }

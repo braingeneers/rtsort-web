@@ -330,8 +330,18 @@ async function runDetection(
     // Load and run the detection ONNX model
     const session = await ort.InferenceSession.create('public/models/detect.onnx')
 
+    // Convert to Uint16Array for float16 tensor using proper IEEE 754 conversion
+    const processedWindowUint16 = new Uint16Array(numChannels * sample_size)
+    for (let i = 0; i < processedWindow.length; i++) {
+      processedWindowUint16[i] = Float16Array.float32ToFloat16(processedWindow[i])
+    }
+
     // Reshape for model input: [numChannels, 1, sample_size]
-    const inputTensor = new ort.Tensor('float32', processedWindow, [numChannels, 1, sample_size])
+    const inputTensor = new ort.Tensor('float16', processedWindowUint16, [
+      numChannels,
+      1,
+      sample_size,
+    ])
 
     const feeds = { input: inputTensor }
     const results = await session.run(feeds)
@@ -421,7 +431,7 @@ async function main(): Promise<void> {
     console.log('='.repeat(50))
 
     // Load configuration
-    const summaryPath = 'validation/export_summary.json'
+    const summaryPath = 'public/models/export_summary.json'
     const summaryContent = await readFile(summaryPath, 'utf-8')
     const summary: ExportSummary = JSON.parse(summaryContent)
 
@@ -432,18 +442,22 @@ async function main(): Promise<void> {
     console.log()
 
     // Load scaled traces
-    const tracesMetadata = await loadMetadata(`validation/${summary.files.scaled_traces.metadata}`)
+    const tracesMetadata = await loadMetadata(
+      `public/models/${summary.files.scaled_traces.metadata}`
+    )
     const scaledTraces = await loadBinaryData(
-      `validation/${summary.files.scaled_traces.binary}`,
+      `public/models/${summary.files.scaled_traces.binary}`,
       tracesMetadata
     )
 
     console.log(`Scaled traces loaded: shape [${tracesMetadata.shape.join(', ')}]`)
 
     // Load expected outputs for comparison
-    const outputsMetadata = await loadMetadata(`validation/${summary.files.model_outputs.metadata}`)
+    const outputsMetadata = await loadMetadata(
+      `public/models/${summary.files.model_outputs.metadata}`
+    )
     const expectedOutputs = await loadBinaryData(
-      `validation/${summary.files.model_outputs.binary}`,
+      `public/models/${summary.files.model_outputs.binary}`,
       outputsMetadata
     )
 

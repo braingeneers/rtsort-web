@@ -1,0 +1,10 @@
+{
+  "shape": [
+    942,
+    1200
+  ],
+  "dtype": "float16",
+  "byte_size": 2260800,
+  "total_elements": 1130400,
+  "description": "Binary export of validation/model_outputs.npy"
+}

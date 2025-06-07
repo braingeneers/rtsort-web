@@ -1,0 +1,33 @@
+{
+  "files": {
+    "scaled_traces": {
+      "binary": "scaled_traces.bin",
+      "metadata": "scaled_traces_metadata.json",
+      "description": "Input scaled traces data for the detection model"
+    },
+    "model_outputs": {
+      "binary": "model_outputs.bin",
+      "metadata": "model_outputs_metadata.json",
+      "description": "Expected output from the detection model"
+    }
+  },
+  "model_parameters": {
+    "sample_size": 200,
+    "num_output_locs": 120,
+    "input_scale": 0.15887516,
+    "inference_scaling_numerator": 12.6,
+    "pre_median_frames": 1000,
+    "buffer_front_sample": 40,
+    "buffer_end_sample": 40,
+    "num_windows_exported": 10,
+    "total_input_frames_exported": 2000,
+    "total_output_frames_exported": 1200
+  },
+  "processing_notes": [
+    "Use first 1000 frames to calculate inference scaling with inference_scaling.onnx",
+    "Process first 2000 frames (10 windows of 200) to get first 1200 outputs (10 windows of 120) with detect.onnx",
+    "Input to detect.onnx should be: (traces - median) * input_scale * inference_scaling",
+    "Input shape to detect.onnx: [num_channels, 1, 200]",
+    "Output shape from detect.onnx: [num_channels, 1, 120]"
+  ]
+}

@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2016",
+    "target": "ESNext",
     "useDefineForClassFields": true,
     "module": "ESNext",
     "sourceMap": true,
-    "lib": ["ES2015", "DOM", "DOM.Iterable"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "moduleResolution": "Bundler",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
