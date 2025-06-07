@@ -316,7 +316,7 @@ def create_inference_scaling_onnx_model():
     return model
 
 
-def save_inference_scaling_model(filename="models/inference_scaling.onnx"):
+def save_inference_scaling_model(filename="public/models/inference_scaling.onnx"):
     """Save the inference scaling ONNX model to file."""
     model = create_inference_scaling_onnx_model()
     onnx.save(model, filename)
@@ -389,7 +389,7 @@ def test_inference_scaling_onnx_on_scaled_traces():
     print(f"PyTorch result: {torch_result}")
 
     # ONNX computation
-    session = ort.InferenceSession("models/inference_scaling.onnx")
+    session = ort.InferenceSession("public/models/inference_scaling.onnx")
     onnx_result = session.run(
         ["inference_scaling"],
         {
