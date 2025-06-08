@@ -96,7 +96,7 @@ async function verifyModelOutputs(workerResults: Float32Array[], expectedData: F
 
   let totalMatches = 0
   let totalComparisons = 0
-  const tolerance = 1e-2 // 3 decimal places
+  const tolerance = 1e-2 // 2 decimal places
 
   for (let window = 0; window < windowsToCheck; window++) {
     const workerOutput = workerResults[window]
