@@ -180,6 +180,14 @@ async function* runDetectionModelWithBenchmark(
         processedData[channel * sampleSize + i] =
           (channelData[i] - median) * inputScale * inferenceScaling
       }
+
+      // Send progress update to the main thread
+      self.postMessage({
+        type: 'processingProgress',
+        message: 'Detecting spikes...',
+        countFinished: startFrame,
+        totalToProcess: totalSamples - sampleSize,
+      })
     }
 
     // Create ONNX tensor with shape [numChannels, 1, sampleSize]

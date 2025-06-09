@@ -20,9 +20,9 @@ python scripts/subset_maxwell_h5.py data/MEA_rec_patch_ground_truth_cell7.raw.h5
 
 # Custom parameters
 python scripts/subset_maxwell_h5.py data/MEA_rec_patch_ground_truth_cell7.raw.h5 \
-    --channels 16 \
-    --seconds 10 \
-    --output data/custom_subset.h5 \
+    --channels 8 \
+    --seconds 5 \
+    --output public/sample_maxwell_raw.h5 \
     --validate
 
 # Help

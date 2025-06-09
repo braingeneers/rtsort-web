@@ -30,5 +30,14 @@
       "port": 9222,
       "runtimeArgs": ["--remote-debugging-port=9222"]
     },
+    {
+      "type": "chrome",
+      "request": "attach",
+      "name": "Attach to Playwright Chrome",
+      "port": 9222,
+      "url": "http://localhost:5173/*",
+      "webRoot": "${workspaceFolder}",
+      "timeout": 30000
+    }
   ]
 }

@@ -6,7 +6,7 @@ test('Navigate to root, click run, wait for results', async ({ page }) => {
   const fileInputElement = page.locator('input[type="file"]')
 
   // NOTE: Playwright reads the entire file so in practice only use MB size files...
-  await fileInputElement.setInputFiles('public/sample.h5')
+  await fileInputElement.setInputFiles('public/sample_maxwell_raw.h5')
 
   // Click the run button.
   // In your App.vue the run button is a v-app-bar-nav-icon with icon="mdi-play".

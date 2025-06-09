@@ -40,6 +40,14 @@
               </v-chip>
             </div>
           </v-card-text>
+          <div v-if="running" class="pa-2">
+            <v-progress-linear
+              :model-value="processingProgress"
+              color="primary"
+              height="4"
+            ></v-progress-linear>
+            <div class="text-caption mt-1">{{ currentStatus }}</div>
+          </div>
         </v-card>
 
         <!-- Error Section -->
@@ -58,6 +66,8 @@ import RTSortWorker from './worker.ts?worker'
 const worker = ref<Worker | null>(null)
 const running = ref(false)
 const useGPU = ref(false)
+const currentStatus = ref('')
+const processingProgress = ref(0)
 const benchmarks = ref<{
   avgTime: number
   minTime: number
@@ -214,7 +224,12 @@ function initializeWorkers() {
   console.log('Initializing workers...')
   worker.value = new RTSortWorker()
   worker.value.onmessage = async (event) => {
-    if (event.data.type === 'result') {
+    if (event.data.type === 'processingProgress') {
+      // Update progress based on countFinished and totalToProcess
+      const { countFinished, totalToProcess } = event.data
+      processingProgress.value = (countFinished / totalToProcess) * 100
+      currentStatus.value = `Processing: ${countFinished} of ${totalToProcess} complete (${Math.round(processingProgress.value)}%)`
+    } else if (event.data.type === 'result') {
       running.value = false
       errorMessage.value = null
       const result = event.data.result
@@ -257,6 +272,8 @@ function handleRun() {
     running.value = true
     errorMessage.value = null
     benchmarks.value = null
+    currentStatus.value = 'Starting spike detector...'
+    processingProgress.value = 0
     worker.value?.postMessage({
       type: 'start',
       modelsURL: `${window.location.href}models`,
@@ -265,7 +282,27 @@ function handleRun() {
   }
 }
 
+// Fetch a sample file on application load
+async function fetchSampleFile() {
+  try {
+    const sampleFileName = 'sample_maxwell_raw.h5'
+    currentStatus.value = 'Loading sample recording...'
+
+    const response = await fetch(sampleFileName)
+    const blob = await response.blob()
+    const file = new File([blob], sampleFileName, { type: blob.type })
+
+    selectedFile.value = file
+    currentStatus.value = 'Sample file loaded'
+    console.log('Sample File:', file)
+  } catch (error) {
+    console.error('Error loading sample file:', error)
+    currentStatus.value = 'Error loading sample file'
+  }
+}
+
 onMounted(() => {
+  fetchSampleFile()
   initializeWorkers()
   // errorMessage.value = 'Please select a file to start.'
 })
