@@ -1,7 +1,6 @@
 venv/
 node_modules/
 debug/
-validation/
 
 dist/
 
@@ -19,3 +18,5 @@ braindance/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+__pycache__/

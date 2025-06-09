@@ -4,13 +4,48 @@
       <v-container>
         <h1>RT-Sort Web</h1>
         <v-card class="mb-4">
-          <v-card-title>Test</v-card-title>
           <v-card-text>
-            <v-btn @click="start" color="primary" class="mr-2">
-              {{ running ? 'Running...' : 'Run' }}
-            </v-btn>
+            <v-file-input
+              v-model="selectedFile"
+              data-cy="file-input"
+              accept=".h5"
+              label="Select File"
+              variant="outlined"
+              prepend-icon="mdi-file"
+              show-size
+              @update:model-value="handleFileSelected"
+            ></v-file-input>
+
+            <v-switch
+              v-model="useGPU"
+              label="Use GPU (WebGPU/WebGL)"
+              color="primary"
+              hide-details
+              :disabled="running"
+              class="mt-4"
+            ></v-switch>
+
+            <div class="mt-4">
+              <v-btn
+                @click="handleRun"
+                color="primary"
+                class="mr-2"
+                :disabled="running"
+                data-cy="run-button"
+              >
+                {{ running ? 'Running...' : 'Run' }}
+              </v-btn>
+              <v-chip :color="useGPU ? 'green' : 'blue'" size="small">
+                {{ useGPU ? 'GPU' : 'CPU' }}
+              </v-chip>
+            </div>
           </v-card-text>
         </v-card>
+
+        <!-- Error Section -->
+        <v-alert v-if="errorMessage" type="error" class="mb-4">
+          {{ errorMessage }}
+        </v-alert>
       </v-container>
     </v-main>
   </v-app>
@@ -18,10 +53,30 @@
 
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
-import SIMSWorker from './worker.ts?worker'
+import RTSortWorker from './worker.ts?worker'
 
 const worker = ref<Worker | null>(null)
 const running = ref(false)
+const useGPU = ref(false)
+const benchmarks = ref<{
+  avgTime: number
+  minTime: number
+  maxTime: number
+  provider: string
+  totalWindows: number
+} | null>(null)
+const errorMessage = ref<string | null>(null)
+
+const selectedFile = ref<File | null>(null)
+
+function handleFileSelected(files: File | File[]) {
+  const file = Array.isArray(files) ? files[0] : files
+  if (file) {
+    selectedFile.value = file
+  } else {
+    selectedFile.value = null
+  }
+}
 
 /**
  * Load expected model outputs from model_outputs.bin for comparison
@@ -86,7 +141,7 @@ async function verifyModelOutputs(workerResults: Float32Array[], expectedData: F
   console.log(`Expected data shape: [${numChannels}, ${expectedData.length / numChannels}]`)
   console.log(`Worker results: ${workerResults.length} windows`)
   console.log(
-    `Checking first ${windowsToCheck} windows (${windowsToCheck * framesPerWindow} frames)`
+    `Checking first ${windowsToCheck} windows (${windowsToCheck * framesPerWindow} frames)`,
   )
 
   if (workerResults.length < windowsToCheck) {
@@ -115,20 +170,20 @@ async function verifyModelOutputs(workerResults: Float32Array[], expectedData: F
         windowComparisons++
         totalComparisons++
         if (matches) totalMatches++
-        if (!matches) {
-          console.warn(
-            `Mismatch at window ${window}, channel ${channel}, frame ${frame}: worker=${workerValue.toFixed(
-              6
-            )}, expected=${expectedValue.toFixed(6)}`
-          )
-        }
+        // if (!matches) {
+        //   console.warn(
+        //     `Mismatch at window ${window}, channel ${channel}, frame ${frame}: worker=${workerValue.toFixed(
+        //       6
+        //     )}, expected=${expectedValue.toFixed(6)}`
+        //   )
+        // }
 
         // Log first few comparisons for debugging
         if (window === 0 && channel === 0 && frame < 5) {
           console.log(
             `  Frame ${frame}: worker=${workerValue.toFixed(6)}, expected=${expectedValue.toFixed(
-              6
-            )}, match=${matches}`
+              6,
+            )}, match=${matches}`,
           )
         }
       }
@@ -137,8 +192,8 @@ async function verifyModelOutputs(workerResults: Float32Array[], expectedData: F
     const windowMatchPercentage = (windowMatches / windowComparisons) * 100
     console.log(
       `  Window ${window}: ${windowMatches}/${windowComparisons} matches (${windowMatchPercentage.toFixed(
-        1
-      )}%)`
+        1,
+      )}%)`,
     )
   }
 
@@ -147,8 +202,8 @@ async function verifyModelOutputs(workerResults: Float32Array[], expectedData: F
 
   console.log(
     `\n📊 Overall: ${totalMatches}/${totalComparisons} matches (${totalMatchPercentage.toFixed(
-      1
-    )}%)`
+      1,
+    )}%)`,
   )
   console.log(`${success ? '✅ MODEL OUTPUTS MATCH' : '❌ MODEL OUTPUTS DO NOT MATCH'}`)
 
@@ -157,13 +212,16 @@ async function verifyModelOutputs(workerResults: Float32Array[], expectedData: F
 
 function initializeWorkers() {
   console.log('Initializing workers...')
-  running.value = true
-  worker.value = new SIMSWorker()
+  worker.value = new RTSortWorker()
   worker.value.onmessage = async (event) => {
     if (event.data.type === 'result') {
       running.value = false
+      errorMessage.value = null
       const result = event.data.result
       console.log('Received result:', result)
+
+      // Store benchmarks
+      benchmarks.value = result.benchmarks
 
       // Verify inference scaling
       console.log(`Expected inference scaling: 0.3761194050`)
@@ -177,22 +235,42 @@ function initializeWorkers() {
       } catch (error) {
         console.error('❌ Failed to verify model outputs:', error)
       }
+    } else if (event.data.type === 'error') {
+      running.value = false
+      errorMessage.value = event.data.error
+      console.error('Worker error:', event.data.error)
     }
+  }
+
+  worker.value.onerror = (error) => {
+    running.value = false
+    errorMessage.value = `Worker error: ${error.message}`
+    console.error('Worker error:', error)
   }
 }
 
-function start() {
-  if (!worker.value) return
-
-  worker.value.postMessage({
-    type: 'start',
-    modelsURL: `${window.location.href}models`,
-  })
-  running.value = true
+function handleRun() {
+  if (!selectedFile.value) {
+    errorMessage.value = 'Please select a file to start.'
+    return
+  } else {
+    running.value = true
+    errorMessage.value = null
+    benchmarks.value = null
+    worker.value?.postMessage({
+      type: 'start',
+      modelsURL: `${window.location.href}models`,
+      useGPU: useGPU.value,
+    })
+  }
 }
 
 onMounted(() => {
   initializeWorkers()
-  start()
+  // errorMessage.value = 'Please select a file to start.'
 })
 </script>
+
+<style scoped>
+/* Remove any custom styles that might be hiding the file input */
+</style>

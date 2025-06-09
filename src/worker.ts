@@ -7,11 +7,47 @@ import { InferenceSession, Tensor, env } from 'onnxruntime-web'
 interface PredictionMessage {
   type: 'start'
   modelsURL: string
+  useGPU?: boolean
 }
 
 /**
- * Calculate linear interpolation for quantiles (matches PyTorch behavior)
+ * Check for GPU availability and determine the best execution provider
  */
+async function getBestExecutionProvider(useGPU: boolean = false): Promise<string[]> {
+  if (!useGPU) {
+    return ['wasm']
+  }
+
+  // Check for WebGPU support first (best performance)
+  if (typeof navigator !== 'undefined' && 'gpu' in navigator) {
+    try {
+      const adapter = await (navigator as any).gpu.requestAdapter()
+      if (adapter) {
+        console.log('🚀 WebGPU available, using webgpu execution provider')
+        return ['webgpu', 'wasm'] // fallback to wasm if webgpu fails
+      }
+    } catch (error) {
+      console.warn('WebGPU adapter request failed:', error)
+    }
+  }
+
+  // Check for WebGL support (fallback GPU option)
+  if (typeof document !== 'undefined') {
+    try {
+      const canvas = document.createElement('canvas')
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
+      if (gl) {
+        console.log('🎮 WebGL available, using webgl execution provider')
+        return ['webgl', 'wasm'] // fallback to wasm if webgl fails
+      }
+    } catch (error) {
+      console.warn('WebGL context creation failed:', error)
+    }
+  }
+
+  console.log('⚠️ No GPU support detected, falling back to CPU (wasm)')
+  return ['wasm']
+}
 function linearInterpolate(sortedData: Float32Array, quantile: number): number {
   const n = sortedData.length
   const index = quantile * (n - 1)
@@ -104,27 +140,29 @@ function calculateInferenceScaling(
 }
 
 /**
- * Run detection model on windowed data
+ * Run detection model on windowed data with benchmarking
  * @param inferenceScaling - The computed inference scaling value
  * @param windowData - The full window data as Float16Array
  * @param detectSession - The ONNX detection session
  * @param numChannels - Number of channels (942)
  * @param totalSamples - Total samples available (2000)
- * @returns Generator yielding detection outputs for each window
+ * @returns Generator yielding detection outputs and timing for each window
  */
-async function* runDetectionModel(
+async function* runDetectionModelWithBenchmark(
   inferenceScaling: number,
   windowData: Float16Array,
   detectSession: InferenceSession,
   numChannels: number = 942,
   totalSamples: number = 2000
-): AsyncGenerator<Float32Array, void, unknown> {
+): AsyncGenerator<{ output: Float32Array; duration: number }, void, unknown> {
   const sampleSize = 200
   const numOutputLocs = 120
   const inputScale = 0.15887516
 
   // Process windows
   for (let startFrame = 0; startFrame <= totalSamples - sampleSize; startFrame += numOutputLocs) {
+    const startTime = performance.now()
+
     // Extract and process window data for each channel
     const processedData = new Float16Array(numChannels * sampleSize)
 
@@ -152,7 +190,13 @@ async function* runDetectionModel(
     // Run detection model
     const results = await detectSession.run({ input: inputTensor })
 
-    yield results.output.data as Float32Array
+    const endTime = performance.now()
+    const duration = endTime - startTime
+
+    yield {
+      output: results.output.data as Float32Array,
+      duration,
+    }
   }
 }
 
@@ -160,35 +204,41 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
   if (event.data.type === 'start') {
     console.log('Received start message')
     console.log('Model URL:', event.data.modelsURL)
-
-    // See https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html
-    const numThreads = navigator.hardwareConcurrency - 1
-    console.log(`Number of threads: ${numThreads}`)
-    env.wasm.numThreads = numThreads
-    env.wasm.proxy = true
-    const options: InferenceSession.SessionOptions = {
-      executionProviders: ['wasm'], // alias of 'cpu'
-      executionMode: 'parallel',
-    }
-
-    const detectSession = await InferenceSession.create(
-      `${event.data.modelsURL}/detect-mea.onnx`,
-      options
-    )
-    console.log('Detection model output names', detectSession.outputNames)
-
-    // Load the window from scaled_traces.bin
-    console.log('🔄 Fetching scaled_traces.bin...')
-    const response = await fetch(`${event.data.modelsURL}/scaled_traces.bin`)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch scaled_traces.bin: ${response.statusText}`)
-    }
-    const arrayBuffer = await response.arrayBuffer()
-    const scaledTraces = new Float16Array(arrayBuffer)
-    const numChannels = 942
-    const totalSamples = 2000
+    console.log('Use GPU:', event.data.useGPU ?? false)
 
     try {
+      // Determine execution providers
+      const executionProviders = await getBestExecutionProvider(event.data.useGPU ?? false)
+      console.log('Selected execution providers:', executionProviders)
+
+      // See https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html
+      const numThreads = navigator.hardwareConcurrency - 1
+      console.log(`Number of threads: ${numThreads}`)
+      env.wasm.numThreads = numThreads
+      env.wasm.proxy = true
+
+      const options: InferenceSession.SessionOptions = {
+        executionProviders: executionProviders,
+        executionMode: 'parallel',
+      }
+
+      const detectSession = await InferenceSession.create(
+        `${event.data.modelsURL}/detect-mea.onnx`,
+        options
+      )
+      console.log('Detection model output names', detectSession.outputNames)
+
+      // Load the window from scaled_traces.bin
+      console.log('🔄 Fetching scaled_traces.bin...')
+      const response = await fetch(`${event.data.modelsURL}/scaled_traces.bin`)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch scaled_traces.bin: ${response.statusText}`)
+      }
+      const arrayBuffer = await response.arrayBuffer()
+      const scaledTraces = new Float16Array(arrayBuffer)
+      const numChannels = 942
+      const totalSamples = 2000
+
       console.log('Starting inference scaling computation...')
       const inferenceScalingValue = calculateInferenceScaling(
         scaledTraces,
@@ -199,7 +249,9 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
 
       console.log('🔄 Running detection model...')
       const detectionResults: Float32Array[] = []
-      for await (const output of runDetectionModel(
+      const benchmarks: number[] = []
+
+      for await (const { output, duration } of runDetectionModelWithBenchmark(
         inferenceScalingValue,
         scaledTraces,
         detectSession,
@@ -207,8 +259,21 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
         totalSamples
       )) {
         detectionResults.push(output)
+        benchmarks.push(duration)
       }
+
       console.log(`✅ Detection completed. Generated ${detectionResults.length} windows`)
+
+      // Calculate benchmark statistics
+      const avgTime = benchmarks.reduce((a, b) => a + b, 0) / benchmarks.length
+      const minTime = Math.min(...benchmarks)
+      const maxTime = Math.max(...benchmarks)
+
+      console.log(`⏱️ Inference benchmarks (per 200-sample window):`)
+      console.log(`   Average: ${avgTime.toFixed(2)}ms`)
+      console.log(`   Min: ${minTime.toFixed(2)}ms`)
+      console.log(`   Max: ${maxTime.toFixed(2)}ms`)
+      console.log(`   Provider: ${executionProviders[0]}`)
 
       // Send results back to main thread
       self.postMessage({
@@ -216,10 +281,21 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
         result: {
           inferenceScaling: inferenceScalingValue,
           detectionOutputs: detectionResults,
+          benchmarks: {
+            avgTime,
+            minTime,
+            maxTime,
+            provider: executionProviders[0],
+            totalWindows: benchmarks.length,
+          },
         },
       })
     } catch (error) {
       console.error('❌ Failed to run detection:', error)
+      self.postMessage({
+        type: 'error',
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 })
