@@ -1,0 +1,10 @@
+{
+  "shape": [
+    942,
+    2000
+  ],
+  "dtype": "float16",
+  "byte_size": 3768000,
+  "total_elements": 1884000,
+  "description": "Binary export of validation/scaled_traces.npy"
+}
