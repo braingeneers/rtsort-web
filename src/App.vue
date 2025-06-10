@@ -12,11 +12,13 @@
           prepend-icon=""
           show-size
           @update:model-value="handleFileSelected"
+          class="mt-4"
+          color="white"
+          base-color="white"
         ></v-file-input>
 
         <!-- File Parameters Display -->
         <v-card v-if="fileParameters" variant="outlined" class="mt-4">
-          <v-card-title class="text-h6">File Parameters</v-card-title>
           <v-card-text>
             <v-row>
               <v-col cols="6" sm="4">
@@ -47,16 +49,29 @@
           </v-card-text>
         </v-card>
 
-        <v-switch
-          v-model="useGPU"
-          label="Use GPU (WebGPU/WebGL)"
-          color="primary"
-          hide-details
-          :disabled="running"
-          class="mt-4"
-        ></v-switch>
+        <!-- GPU/CPU Selection Radio Buttons -->
+        <v-card variant="outlined" class="mt-4">
+          <v-card-title class="text-subtitle-1">Processing Mode</v-card-title>
+          <v-card-text>
+            <v-radio-group v-model="processingMode" inline>
+              <v-radio label="CPU" value="cpu" color="primary" :disabled="running"></v-radio>
+              <v-radio
+                label="GPU"
+                value="gpu"
+                color="primary"
+                :disabled="running || !gpuAvailable"
+              ></v-radio>
+            </v-radio-group>
+            <div class="text-caption text-medium-emphasis">
+              <v-icon size="small" :color="gpuAvailable ? 'success' : 'warning'" class="mr-1">
+                {{ gpuAvailable ? 'mdi-check-circle' : 'mdi-alert-circle' }}
+              </v-icon>
+              {{ gpuStatusText }}
+            </div>
+          </v-card-text>
+        </v-card>
 
-        <div class="mt-4">
+        <div class="mt-2">
           <v-btn
             v-if="!running"
             @click="handleRun"
@@ -70,11 +85,11 @@
           <v-btn v-else @click="handleStop" color="error" class="mr-2" data-cy="stop-button">
             Stop
           </v-btn>
-          <v-chip :color="useGPU ? 'green' : 'blue'" size="small">
-            {{ useGPU ? 'GPU' : 'CPU' }}
+          <v-chip :color="processingMode === 'gpu' ? 'green' : 'blue'" size="small">
+            {{ processingMode === 'gpu' ? 'GPU' : 'CPU' }}
           </v-chip>
         </div>
-        <div class="text-caption mt-1">{{ currentStatus }}</div>
+        <div class="text-caption mt-4">{{ currentStatus }}</div>
         <div v-if="running" class="pa-2">
           <v-progress-linear
             :model-value="processingProgress"
@@ -84,7 +99,7 @@
         </div>
 
         <!-- Realtime Capacity Display -->
-        <v-card v-if="realtimeCapacity !== null" variant="outlined" class="mb-4">
+        <v-card v-if="realtimeCapacity !== null" variant="outlined" class="mt-4">
           <v-card-title class="text-h6">
             <v-icon class="mr-2">mdi-speedometer</v-icon>
             Realtime Processing Capacity
@@ -96,7 +111,9 @@
                 <div
                   class="text-h4"
                   :class="
-                    realtimeCapacity >= fileParameters?.numChannels ? 'text-green' : 'text-orange'
+                    realtimeCapacity >= (fileParameters?.numChannels ?? 0)
+                      ? 'text-green'
+                      : 'text-orange'
                   "
                 >
                   {{ realtimeCapacity.toFixed(1) }}
@@ -105,13 +122,11 @@
               </v-col>
               <v-col cols="6" sm="3">
                 <div class="text-caption">Processing Speed</div>
-                <div class="text-body-1">{{ framesPerSecond?.toFixed(0) || 0 }} frames/sec</div>
-                <div class="text-caption">{{ samplesPerSecond?.toFixed(0) || 0 }} samples/sec</div>
+                <div class="text-body-1">{{ samplesPerSecond?.toFixed(0) || 0 }} samples/sec</div>
               </v-col>
               <v-col cols="6" sm="3">
                 <div class="text-caption">Required Speed</div>
-                <div class="text-body-1">{{ fileParameters?.samplingRate || 0 }} frames/sec</div>
-                <div class="text-caption">
+                <div class="text-body-1">
                   {{
                     (
                       (fileParameters?.samplingRate || 0) * (fileParameters?.numChannels || 0)
@@ -152,7 +167,8 @@ import RTSortWorker from './worker.ts?worker'
 const worker = ref<Worker | null>(null)
 const parsingFile = ref(false)
 const running = ref(false)
-const useGPU = ref(false)
+const processingMode = ref<'cpu' | 'gpu'>('cpu')
+const gpuAvailable = ref(false)
 const currentStatus = ref('')
 const processingProgress = ref(0)
 const benchmarks = ref<{
@@ -165,8 +181,18 @@ const benchmarks = ref<{
 
 // New realtime capacity tracking
 const realtimeCapacity = ref<number | null>(null)
-const framesPerSecond = ref<number | null>(null)
 const samplesPerSecond = ref<number | null>(null)
+
+// Computed GPU status text
+const gpuStatusText = computed(() => {
+  if (gpuAvailable.value) {
+    return 'GPU acceleration available (WebGPU or WebGL detected)'
+  }
+  return 'GPU acceleration not available - CPU processing only'
+})
+
+// Computed for backward compatibility
+const useGPU = computed(() => processingMode.value === 'gpu')
 
 // Computed efficiency percentage
 const efficiency = computed(() => {
@@ -350,10 +376,9 @@ function initializeWorkers() {
     } else if (event.data.type === 'realtimeCapacity') {
       // Handle realtime capacity updates
       realtimeCapacity.value = event.data.capacity
-      framesPerSecond.value = event.data.framesPerSecond
       samplesPerSecond.value = event.data.samplesPerSecond
       console.log(
-        `📈 Realtime capacity: ${event.data.capacity.toFixed(1)} channels (${event.data.framesPerSecond.toFixed(0)} frames/sec, ${event.data.samplesPerSecond.toFixed(0)} samples/sec)`,
+        `📈 Realtime capacity: ${event.data.capacity.toFixed(1)} channels (${event.data.samplesPerSecond.toFixed(0)} samples/sec)`,
       )
     } else if (event.data.type === 'fileParameters') {
       // Handle file parameters response
@@ -368,7 +393,6 @@ function initializeWorkers() {
       currentStatus.value = 'Processing stopped by user'
       processingProgress.value = 0
       realtimeCapacity.value = null
-      framesPerSecond.value = null
       samplesPerSecond.value = null
       console.log('Processing stopped by user')
     } else if (event.data.type === 'result') {
@@ -402,7 +426,6 @@ function initializeWorkers() {
       running.value = false
       errorMessage.value = event.data.error
       realtimeCapacity.value = null
-      framesPerSecond.value = null
       samplesPerSecond.value = null
       console.error('Worker error:', event.data.error)
     }
@@ -430,7 +453,6 @@ function handleStop() {
   currentStatus.value = 'Processing stopped'
   errorMessage.value = null
   realtimeCapacity.value = null
-  framesPerSecond.value = null
   samplesPerSecond.value = null
 
   // Re-initialize worker for future use
@@ -475,6 +497,41 @@ function handleRun() {
   }
 }
 
+/**
+ * Detect GPU availability in the browser
+ */
+async function detectGPUAvailability(): Promise<boolean> {
+  // Check for WebGPU support first (best performance)
+  if (typeof navigator !== 'undefined' && 'gpu' in navigator) {
+    try {
+      const adapter = await (navigator as any).gpu.requestAdapter()
+      if (adapter) {
+        console.log('🚀 WebGPU available')
+        return true
+      }
+    } catch (error) {
+      console.warn('WebGPU adapter request failed:', error)
+    }
+  }
+
+  // Check for WebGL support (fallback GPU option)
+  if (typeof document !== 'undefined') {
+    try {
+      const canvas = document.createElement('canvas')
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
+      if (gl) {
+        console.log('🎮 WebGL available')
+        return true
+      }
+    } catch (error) {
+      console.warn('WebGL context creation failed:', error)
+    }
+  }
+
+  console.log('⚠️ No GPU support detected')
+  return false
+}
+
 // Fetch a sample file on application load
 async function fetchSampleFile() {
   try {
@@ -503,9 +560,12 @@ async function fetchSampleFile() {
 }
 
 onMounted(async () => {
+  // Detect GPU availability first and set default processing mode
+  gpuAvailable.value = await detectGPUAvailability()
+  processingMode.value = gpuAvailable.value ? 'gpu' : 'cpu'
+
   initializeWorkers()
   await fetchSampleFile()
-  // errorMessage.value = 'Please select a file to start.'
 })
 </script>
 
