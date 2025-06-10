@@ -3,88 +3,137 @@
     <v-main>
       <v-container>
         <h1>RT-Sort Web</h1>
-        <v-card class="mb-4">
+        <v-file-input
+          v-model="selectedFile"
+          data-cy="file-input"
+          accept=".h5"
+          label="Select File"
+          variant="outlined"
+          prepend-icon=""
+          show-size
+          @update:model-value="handleFileSelected"
+        ></v-file-input>
+
+        <!-- File Parameters Display -->
+        <v-card v-if="fileParameters" variant="outlined" class="mt-4">
+          <v-card-title class="text-h6">File Parameters</v-card-title>
           <v-card-text>
-            <v-file-input
-              v-model="selectedFile"
-              data-cy="file-input"
-              accept=".h5"
-              label="Select File"
-              variant="outlined"
-              prepend-icon=""
-              show-size
-              @update:model-value="handleFileSelected"
-            ></v-file-input>
-
-            <!-- File Parameters Display -->
-            <v-card v-if="fileParameters" variant="outlined" class="mt-4">
-              <v-card-title class="text-h6">File Parameters</v-card-title>
-              <v-card-text>
-                <v-row>
-                  <v-col cols="6" sm="4">
-                    <div class="text-caption">Channels</div>
-                    <div class="text-body-1">{{ fileParameters.numChannels }}</div>
-                  </v-col>
-                  <v-col cols="6" sm="4">
-                    <div class="text-caption">Frames</div>
-                    <div class="text-body-1">{{ fileParameters.numSamples }}</div>
-                  </v-col>
-                  <v-col cols="6" sm="4">
-                    <div class="text-caption">Duration</div>
-                    <div class="text-body-1">{{ fileParameters.duration.toFixed(2) }}s</div>
-                  </v-col>
-                  <v-col cols="6" sm="4">
-                    <div class="text-caption">Sampling Rate</div>
-                    <div class="text-body-1">{{ fileParameters.samplingRate }} Hz</div>
-                  </v-col>
-                  <v-col cols="6" sm="4">
-                    <div class="text-caption">LSB</div>
-                    <div class="text-body-1">{{ fileParameters.lsb }}</div>
-                  </v-col>
-                  <v-col cols="6" sm="4">
-                    <div class="text-caption">Gain</div>
-                    <div class="text-body-1">{{ fileParameters.gain }}</div>
-                  </v-col>
-                </v-row>
-              </v-card-text>
-            </v-card>
-
-            <v-switch
-              v-model="useGPU"
-              label="Use GPU (WebGPU/WebGL)"
-              color="primary"
-              hide-details
-              :disabled="running"
-              class="mt-4"
-            ></v-switch>
-
-            <div class="mt-4">
-              <v-btn
-                v-if="!running"
-                @click="handleRun"
-                color="primary"
-                class="mr-2"
-                :disabled="parsingFile"
-                data-cy="run-button"
-              >
-                Run
-              </v-btn>
-              <v-btn v-else @click="handleStop" color="error" class="mr-2" data-cy="stop-button">
-                Stop
-              </v-btn>
-              <v-chip :color="useGPU ? 'green' : 'blue'" size="small">
-                {{ useGPU ? 'GPU' : 'CPU' }}
-              </v-chip>
-            </div>
+            <v-row>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">Channels</div>
+                <div class="text-body-1">{{ fileParameters.numChannels }}</div>
+              </v-col>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">Frames</div>
+                <div class="text-body-1">{{ fileParameters.numSamples }}</div>
+              </v-col>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">Duration</div>
+                <div class="text-body-1">{{ fileParameters.duration.toFixed(2) }}s</div>
+              </v-col>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">Sampling Rate</div>
+                <div class="text-body-1">{{ fileParameters.samplingRate }} Hz</div>
+              </v-col>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">LSB</div>
+                <div class="text-body-1">{{ fileParameters.lsb }}</div>
+              </v-col>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">Gain</div>
+                <div class="text-body-1">{{ fileParameters.gain }}</div>
+              </v-col>
+            </v-row>
           </v-card-text>
-          <div class="text-caption mt-1">{{ currentStatus }}</div>
-          <div v-if="running" class="pa-2">
+        </v-card>
+
+        <v-switch
+          v-model="useGPU"
+          label="Use GPU (WebGPU/WebGL)"
+          color="primary"
+          hide-details
+          :disabled="running"
+          class="mt-4"
+        ></v-switch>
+
+        <div class="mt-4">
+          <v-btn
+            v-if="!running"
+            @click="handleRun"
+            color="primary"
+            class="mr-2"
+            :disabled="parsingFile"
+            data-cy="run-button"
+          >
+            Run
+          </v-btn>
+          <v-btn v-else @click="handleStop" color="error" class="mr-2" data-cy="stop-button">
+            Stop
+          </v-btn>
+          <v-chip :color="useGPU ? 'green' : 'blue'" size="small">
+            {{ useGPU ? 'GPU' : 'CPU' }}
+          </v-chip>
+        </div>
+        <div class="text-caption mt-1">{{ currentStatus }}</div>
+        <div v-if="running" class="pa-2">
+          <v-progress-linear
+            :model-value="processingProgress"
+            color="primary"
+            height="4"
+          ></v-progress-linear>
+        </div>
+
+        <!-- Realtime Capacity Display -->
+        <v-card v-if="realtimeCapacity !== null" variant="outlined" class="mb-4">
+          <v-card-title class="text-h6">
+            <v-icon class="mr-2">mdi-speedometer</v-icon>
+            Realtime Processing Capacity
+          </v-card-title>
+          <v-card-text>
+            <v-row>
+              <v-col cols="6" sm="3">
+                <div class="text-caption">Channels in Realtime</div>
+                <div
+                  class="text-h4"
+                  :class="
+                    realtimeCapacity >= fileParameters?.numChannels ? 'text-green' : 'text-orange'
+                  "
+                >
+                  {{ realtimeCapacity.toFixed(1) }}
+                </div>
+                <div class="text-caption">of {{ fileParameters?.numChannels || 0 }} total</div>
+              </v-col>
+              <v-col cols="6" sm="3">
+                <div class="text-caption">Processing Speed</div>
+                <div class="text-body-1">{{ framesPerSecond?.toFixed(0) || 0 }} frames/sec</div>
+                <div class="text-caption">{{ samplesPerSecond?.toFixed(0) || 0 }} samples/sec</div>
+              </v-col>
+              <v-col cols="6" sm="3">
+                <div class="text-caption">Required Speed</div>
+                <div class="text-body-1">{{ fileParameters?.samplingRate || 0 }} frames/sec</div>
+                <div class="text-caption">
+                  {{
+                    (
+                      (fileParameters?.samplingRate || 0) * (fileParameters?.numChannels || 0)
+                    ).toFixed(0)
+                  }}
+                  samples/sec
+                </div>
+              </v-col>
+              <v-col cols="6" sm="3">
+                <div class="text-caption">Efficiency</div>
+                <div class="text-body-1" :class="efficiency >= 100 ? 'text-green' : 'text-orange'">
+                  {{ efficiency.toFixed(1) }}%
+                </div>
+              </v-col>
+            </v-row>
             <v-progress-linear
-              :model-value="processingProgress"
-              color="primary"
-              height="4"
+              :model-value="Math.min(efficiency, 100)"
+              :color="efficiency >= 100 ? 'green' : 'orange'"
+              height="8"
+              class="mt-2"
             ></v-progress-linear>
-          </div>
+          </v-card-text>
         </v-card>
 
         <!-- Error Section -->
@@ -97,7 +146,7 @@
 </template>
 
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import RTSortWorker from './worker.ts?worker'
 
 const worker = ref<Worker | null>(null)
@@ -113,6 +162,18 @@ const benchmarks = ref<{
   provider: string
   totalWindows: number
 } | null>(null)
+
+// New realtime capacity tracking
+const realtimeCapacity = ref<number | null>(null)
+const framesPerSecond = ref<number | null>(null)
+const samplesPerSecond = ref<number | null>(null)
+
+// Computed efficiency percentage
+const efficiency = computed(() => {
+  if (!realtimeCapacity.value || !fileParameters.value) return 0
+  return (realtimeCapacity.value / fileParameters.value.numChannels) * 100
+})
+
 const errorMessage = ref<string | null>(null)
 
 const selectedFile = ref<File | null>(null)
@@ -286,6 +347,14 @@ function initializeWorkers() {
       const { countFinished, totalToProcess } = event.data
       processingProgress.value = (countFinished / totalToProcess) * 100
       currentStatus.value = `Processing: ${countFinished} of ${totalToProcess} complete (${Math.round(processingProgress.value)}%)`
+    } else if (event.data.type === 'realtimeCapacity') {
+      // Handle realtime capacity updates
+      realtimeCapacity.value = event.data.capacity
+      framesPerSecond.value = event.data.framesPerSecond
+      samplesPerSecond.value = event.data.samplesPerSecond
+      console.log(
+        `📈 Realtime capacity: ${event.data.capacity.toFixed(1)} channels (${event.data.framesPerSecond.toFixed(0)} frames/sec, ${event.data.samplesPerSecond.toFixed(0)} samples/sec)`,
+      )
     } else if (event.data.type === 'fileParameters') {
       // Handle file parameters response
       fileParameters.value = event.data.parameters
@@ -298,6 +367,9 @@ function initializeWorkers() {
       errorMessage.value = null
       currentStatus.value = 'Processing stopped by user'
       processingProgress.value = 0
+      realtimeCapacity.value = null
+      framesPerSecond.value = null
+      samplesPerSecond.value = null
       console.log('Processing stopped by user')
     } else if (event.data.type === 'result') {
       running.value = false
@@ -305,8 +377,14 @@ function initializeWorkers() {
       const result = event.data.result
       console.log('Received result:', result)
 
-      // Store benchmarks
-      benchmarks.value = result.benchmarks
+      // Store minimal result info
+      benchmarks.value = {
+        avgTime: 0,
+        minTime: 0,
+        maxTime: 0,
+        provider: result.executionProvider,
+        totalWindows: result.totalWindows,
+      }
 
       // Verify inference scaling
       console.log(`Expected inference scaling: 0.3761194050`)
@@ -323,6 +401,9 @@ function initializeWorkers() {
     } else if (event.data.type === 'error') {
       running.value = false
       errorMessage.value = event.data.error
+      realtimeCapacity.value = null
+      framesPerSecond.value = null
+      samplesPerSecond.value = null
       console.error('Worker error:', event.data.error)
     }
   }
@@ -348,6 +429,9 @@ function handleStop() {
   processingProgress.value = 0
   currentStatus.value = 'Processing stopped'
   errorMessage.value = null
+  realtimeCapacity.value = null
+  framesPerSecond.value = null
+  samplesPerSecond.value = null
 
   // Re-initialize worker for future use
   initializeWorkers()

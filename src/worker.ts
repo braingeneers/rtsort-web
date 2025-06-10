@@ -466,11 +466,17 @@ async function* runDetectionModelWithBenchmarkFromH5(
   detectSession: InferenceSession,
 ): AsyncGenerator<{ output: Float32Array; duration: number }, void, unknown> {
   const sampleSize = 200
-  // const numOutputLocs = 120
   const inputScale = 0.15887516
 
   const numChannels = parameters.numChannels
   const totalSamples = parameters.numSamples
+  const samplingRate = parameters.samplingRate
+
+  // Realtime processing metrics
+  let processedFrames = 0
+  let startTime = performance.now()
+  let lastReportTime = startTime
+  const reportInterval = 1000 // Report every 1 second
 
   // Initialize h5wasm and handle mounting here
   const Module = await h5wasm.ready
@@ -494,7 +500,7 @@ async function* runDetectionModelWithBenchmarkFromH5(
         return
       }
 
-      const startTime = performance.now()
+      const windowStartTime = performance.now()
 
       // Read this window from the h5 file
       const endFrame = Math.min(startFrame + sampleSize, totalSamples)
@@ -550,8 +556,38 @@ async function* runDetectionModelWithBenchmarkFromH5(
       // Run detection model
       const results = await detectSession.run({ input: inputTensor })
 
-      const endTime = performance.now()
-      const duration = endTime - startTime
+      const windowEndTime = performance.now()
+      const windowDuration = windowEndTime - windowStartTime
+
+      // Update processed frames (each frame contains all channels)
+      processedFrames += actualFrames
+
+      // Check if it's time to report realtime capacity
+      const currentTime = performance.now()
+      if (currentTime - lastReportTime >= reportInterval) {
+        const elapsedSeconds = (currentTime - startTime) / 1000
+        const framesPerSecond = processedFrames / elapsedSeconds
+
+        // Calculate how many channels could be processed in realtime
+        // Each frame contains all channels, so if we process framesPerSecond frames,
+        // and each frame contains numChannels channels, then we're processing
+        // framesPerSecond * numChannels channel-samples per second.
+        // For realtime, we need samplingRate frames per second.
+        // So realtime capacity = (framesPerSecond / samplingRate) * numChannels
+        const realtimeChannelCapacity = (framesPerSecond / samplingRate) * numChannels
+
+        // Send realtime capacity update to main thread
+        self.postMessage({
+          type: 'realtimeCapacity',
+          capacity: realtimeChannelCapacity,
+          framesPerSecond: framesPerSecond,
+          samplesPerSecond: framesPerSecond * numChannels,
+          totalChannels: numChannels,
+          samplingRate: samplingRate,
+        })
+
+        lastReportTime = currentTime
+      }
 
       // Send progress update to the main thread
       self.postMessage({
@@ -563,7 +599,7 @@ async function* runDetectionModelWithBenchmarkFromH5(
 
       yield {
         output: results.output.data as Float32Array,
-        duration,
+        duration: windowDuration,
       }
     }
 
@@ -642,9 +678,8 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
 
       console.log('🔄 Running detection model...')
       const detectionResults: Float32Array[] = []
-      const benchmarks: number[] = []
 
-      for await (const { output, duration } of runDetectionModelWithBenchmark(
+      for await (const { output } of runDetectionModelWithBenchmark(
         inferenceScalingValue,
         scaledTraces,
         detectSession,
@@ -657,21 +692,9 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
           return
         }
         detectionResults.push(output)
-        benchmarks.push(duration)
       }
 
       console.log(`✅ Detection completed. Generated ${detectionResults.length} windows`)
-
-      // Calculate benchmark statistics
-      const avgTime = benchmarks.reduce((a, b) => a + b, 0) / benchmarks.length
-      const minTime = Math.min(...benchmarks)
-      const maxTime = Math.max(...benchmarks)
-
-      console.log(`⏱️ Inference benchmarks (per 200-sample window):`)
-      console.log(`   Average: ${avgTime.toFixed(2)}ms`)
-      console.log(`   Min: ${minTime.toFixed(2)}ms`)
-      console.log(`   Max: ${maxTime.toFixed(2)}ms`)
-      console.log(`   Provider: ${executionProviders[0]}`)
 
       // Send results back to main thread
       self.postMessage({
@@ -679,13 +702,8 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
         result: {
           inferenceScaling: inferenceScalingValue,
           detectionOutputs: detectionResults,
-          benchmarks: {
-            avgTime,
-            minTime,
-            maxTime,
-            provider: executionProviders[0],
-            totalWindows: benchmarks.length,
-          },
+          executionProvider: executionProviders[0],
+          totalWindows: detectionResults.length,
         },
       })
     } catch (error) {
@@ -758,9 +776,8 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
       // Run detection model with h5 streaming
       console.log('🔄 Running detection model with h5 streaming...')
       const detectionResults: Float32Array[] = []
-      const benchmarks: number[] = []
 
-      for await (const { output, duration } of runDetectionModelWithBenchmarkFromH5(
+      for await (const { output } of runDetectionModelWithBenchmarkFromH5(
         event.data.file,
         parameters,
         inferenceScalingValue,
@@ -772,21 +789,9 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
           return
         }
         detectionResults.push(output)
-        benchmarks.push(duration)
       }
 
       console.log(`✅ Detection completed. Generated ${detectionResults.length} windows`)
-
-      // Calculate benchmark statistics
-      const avgTime = benchmarks.reduce((a, b) => a + b, 0) / benchmarks.length
-      const minTime = Math.min(...benchmarks)
-      const maxTime = Math.max(...benchmarks)
-
-      console.log(`⏱️ Inference benchmarks (per 200-sample window):`)
-      console.log(`   Average: ${avgTime.toFixed(2)}ms`)
-      console.log(`   Min: ${minTime.toFixed(2)}ms`)
-      console.log(`   Max: ${maxTime.toFixed(2)}ms`)
-      console.log(`   Provider: ${executionProviders[0]}`)
 
       // Send results back to main thread
       self.postMessage({
@@ -795,13 +800,8 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
           inferenceScaling: inferenceScalingValue,
           detectionOutputs: detectionResults,
           parameters,
-          benchmarks: {
-            avgTime,
-            minTime,
-            maxTime,
-            provider: executionProviders[0],
-            totalWindows: benchmarks.length,
-          },
+          executionProvider: executionProviders[0],
+          totalWindows: detectionResults.length,
         },
       })
     } catch (error) {
