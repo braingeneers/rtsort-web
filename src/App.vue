@@ -218,6 +218,9 @@ function handleFileSelected(files: File | File[]) {
   if (file) {
     selectedFile.value = file
     fileParameters.value = null // Reset parameters
+    // Clear realtime capacity when file changes
+    realtimeCapacity.value = null
+    samplesPerSecond.value = null
     // Send message to worker to extract h5 file parameters
     if (file.name.endsWith('.h5')) {
       worker.value?.postMessage({
@@ -229,6 +232,9 @@ function handleFileSelected(files: File | File[]) {
     selectedFile.value = null
     fileParameters.value = null
     parsingFile.value = false
+    // Clear realtime capacity when no file selected
+    realtimeCapacity.value = null
+    samplesPerSecond.value = null
   }
 }
 
@@ -392,8 +398,7 @@ function initializeWorkers() {
       errorMessage.value = null
       currentStatus.value = 'Processing stopped by user'
       processingProgress.value = 0
-      realtimeCapacity.value = null
-      samplesPerSecond.value = null
+      // Do NOT clear realtimeCapacity and samplesPerSecond when stopped
       console.log('Processing stopped by user')
     } else if (event.data.type === 'result') {
       running.value = false
@@ -447,13 +452,12 @@ function handleStop() {
     worker.value = null
   }
 
-  // Reset state
+  // Reset state but preserve realtime capacity display
   running.value = false
   processingProgress.value = 0
   currentStatus.value = 'Processing stopped'
   errorMessage.value = null
-  realtimeCapacity.value = null
-  samplesPerSecond.value = null
+  // Do NOT clear realtimeCapacity and samplesPerSecond when stopping
 
   // Re-initialize worker for future use
   initializeWorkers()
@@ -464,6 +468,10 @@ function handleRun() {
     errorMessage.value = 'Please select a file to start.'
     return
   }
+
+  // Clear realtime capacity when starting a new run
+  realtimeCapacity.value = null
+  samplesPerSecond.value = null
 
   if (selectedFile.value.name.endsWith('.h5')) {
     if (!fileParameters.value) {
