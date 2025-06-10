@@ -63,7 +63,7 @@
                 @click="handleRun"
                 color="primary"
                 class="mr-2"
-                :disabled="running"
+                :disabled="parsingFile || running"
                 data-cy="run-button"
               >
                 {{ running ? 'Running...' : 'Run' }}
@@ -73,13 +73,13 @@
               </v-chip>
             </div>
           </v-card-text>
+          <div class="text-caption mt-1">{{ currentStatus }}</div>
           <div v-if="running" class="pa-2">
             <v-progress-linear
               :model-value="processingProgress"
               color="primary"
               height="4"
             ></v-progress-linear>
-            <div class="text-caption mt-1">{{ currentStatus }}</div>
           </div>
         </v-card>
 
@@ -97,6 +97,7 @@ import { onMounted, ref } from 'vue'
 import RTSortWorker from './worker.ts?worker'
 
 const worker = ref<Worker | null>(null)
+const parsingFile = ref(false)
 const running = ref(false)
 const useGPU = ref(false)
 const currentStatus = ref('')
@@ -121,6 +122,7 @@ const fileParameters = ref<{
 } | null>(null)
 
 function handleFileSelected(files: File | File[]) {
+  parsingFile.value = true
   const file = Array.isArray(files) ? files[0] : files
   if (file) {
     selectedFile.value = file
@@ -135,6 +137,7 @@ function handleFileSelected(files: File | File[]) {
   } else {
     selectedFile.value = null
     fileParameters.value = null
+    parsingFile.value = false
   }
 }
 
@@ -282,6 +285,8 @@ function initializeWorkers() {
     } else if (event.data.type === 'fileParameters') {
       // Handle file parameters response
       fileParameters.value = event.data.parameters
+      parsingFile.value = false
+      errorMessage.value = null
       currentStatus.value = 'File parameters extracted'
     } else if (event.data.type === 'result') {
       running.value = false

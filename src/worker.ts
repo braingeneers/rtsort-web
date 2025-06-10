@@ -329,70 +329,82 @@ async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> 
   }
 }
 
-/**
- * Stream raw uint16 frames from h5 file
- */
-async function* streamRawFramesFromH5(
-  h5File: File,
-  startFrame: number = 0,
-  numFrames: number = 1000,
-): AsyncGenerator<{ frames: Uint16Array; actualFrames: number }, void, unknown> {
-  console.log(`🔄 Streaming ${numFrames} frames starting at ${startFrame}...`)
+// /**
+//  * Stream raw uint16 frames from h5 file
+//  */
+// async function* streamRawFramesFromH5(
+//   h5File: File,
+//   startFrame: number = 0,
+//   numFrames: number = 1000,
+// ): AsyncGenerator<{ frames: Uint16Array; actualFrames: number }, void, unknown> {
+//   console.log(`🔄 Streaming ${numFrames} frames starting at ${startFrame}...`)
 
-  // Initialize h5wasm
-  const Module = await h5wasm.ready
-  const { FS } = Module
+//   // Initialize h5wasm
+//   const Module = await h5wasm.ready
+//   const { FS } = Module
 
-  try {
-    // Mount the file to the filesystem
-    if (!FS.analyzePath('/work').exists) {
-      FS.mkdir('/work')
-    }
-    FS.mount(FS.filesystems.WORKERFS, { files: [h5File] }, '/work')
+//   try {
+//     // Mount the file to the filesystem
+//     if (!FS.analyzePath('/work').exists) {
+//       FS.mkdir('/work')
+//     }
+//     FS.mount(FS.filesystems.WORKERFS, { files: [h5File] }, '/work')
 
-    // Open the h5 file
-    const h5 = new h5wasm.File(`/work/${h5File.name}`, 'r') as H5File
-    const sig = h5.get('sig') as H5DataSet
-    const [numChannels, totalSamples] = sig.shape
+//     // Open the h5 file
+//     const h5 = new h5wasm.File(`/work/${h5File.name}`, 'r') as H5File
+//     const sig = h5.get('sig') as H5DataSet
+//     const [numChannels, totalSamples] = sig.shape
 
-    // Ensure we don't read beyond the file
-    const endFrame = Math.min(startFrame + numFrames, totalSamples)
-    const actualFrames = endFrame - startFrame
+//     // Ensure we don't read beyond the file
+//     const endFrame = Math.min(startFrame + numFrames, totalSamples)
+//     const actualFrames = endFrame - startFrame
 
-    if (actualFrames <= 0) {
-      console.log('No frames to read')
-      return
-    }
+//     if (actualFrames <= 0) {
+//       console.log('No frames to read')
+//       return
+//     }
 
-    // Read the data slice: [all channels, startFrame:endFrame]
-    const frameData = sig.slice([
-      [0, numChannels],
-      [startFrame, endFrame],
-    ])
+//     // Read the data slice: [all channels, startFrame:endFrame]
+//     const frameData = sig.slice([
+//       [0, numChannels],
+//       [startFrame, endFrame],
+//     ])
 
-    // Convert to Uint16Array (Maxwell data is stored as uint16)
-    const frames = new Uint16Array(frameData.flat())
+//     // Convert to Uint16Array - handle different possible return types from h5wasm
+//     let frames: Uint16Array
+//     if (frameData instanceof Uint16Array) {
+//       frames = frameData
+//     } else if (ArrayBuffer.isView(frameData)) {
+//       frames = new Uint16Array(frameData.buffer, frameData.byteOffset, frameData.byteLength / 2)
+//     } else if (Array.isArray(frameData)) {
+//       // If it's a nested array, flatten it first
+//       const flatData = frameData.flat()
+//       frames = new Uint16Array(flatData)
+//     } else {
+//       // Fallback: try to convert directly
+//       frames = new Uint16Array(frameData)
+//     }
 
-    console.log(`✅ Read ${actualFrames} frames for ${numChannels} channels`)
+//     console.log(`✅ Read ${actualFrames} frames for ${numChannels} channels`)
 
-    yield { frames, actualFrames }
+//     yield { frames, actualFrames }
 
-    // Close the file
-    h5.close()
-    FS.unmount('/work')
-  } catch (error) {
-    console.error('❌ Error streaming frames from h5 file:', error)
+//     // Close the file
+//     h5.close()
+//     FS.unmount('/work')
+//   } catch (error) {
+//     console.error('❌ Error streaming frames from h5 file:', error)
 
-    // Clean up on error
-    try {
-      FS.unmount('/work')
-    } catch (e) {
-      // Ignore unmount errors
-    }
+//     // Clean up on error
+//     try {
+//       FS.unmount('/work')
+//     } catch (e) {
+//       // Ignore unmount errors
+//     }
 
-    throw error
-  }
-}
+//     throw error
+//   }
+// }
 
 /**
  * Scale raw uint16 frames to physical values and then to scaled traces
@@ -411,8 +423,9 @@ function scaleRawFramesToFloat16(
   console.log(`🔄 Scaling ${numChannels} channels x ${numFrames} frames...`)
 
   // Convert raw uint16 to physical values (microvolts)
-  // Formula: physical_value = raw * lsb * 1e6 * gain
-  const scalingFactor = parameters.lsb * 1e6 * parameters.gain
+  // REMIND: lsb must imply the 1e6...spelunk into:
+  // https://github.com/SpikeInterface/spikeinterface/blob/fb3bda89828134800938f33e7d7d938872f01fbd/src/spikeinterface/extractors/neoextractors/neobaseextractor.py#L249
+  const scalingFactor = parameters.lsb * 1e6
 
   // Create Float16Array for scaled traces
   const scaledTraces = new Float16Array(numChannels * numFrames)
@@ -438,8 +451,50 @@ async function calculateInferenceScalingFromH5(
 ): Promise<number> {
   console.log('🔄 Calculating inference scaling from h5 file...')
 
-  // Stream the first preMedianFrames from the h5 file
-  for await (const { frames, actualFrames } of streamRawFramesFromH5(h5File, 0, preMedianFrames)) {
+  // Initialize h5wasm and handle mounting here
+  const Module = await h5wasm.ready
+  const { FS } = Module
+
+  try {
+    // Mount the file to the filesystem
+    if (!FS.analyzePath('/work').exists) {
+      FS.mkdir('/work')
+    }
+    FS.mount(FS.filesystems.WORKERFS, { files: [h5File] }, '/work')
+
+    // Open the h5 file
+    const h5 = new h5wasm.File(`/work/${h5File.name}`, 'r') as H5File
+    const sig = h5.get('sig') as H5DataSet
+    const [numChannels, totalSamples] = sig.shape
+
+    // Ensure we don't read beyond the file
+    const actualFrames = Math.min(preMedianFrames, totalSamples)
+
+    if (actualFrames <= 0) {
+      throw new Error('No frames to read for inference scaling calculation')
+    }
+
+    // Read the data slice: [all channels, 0:actualFrames]
+    const frameData = sig.slice([
+      [0, numChannels],
+      [0, actualFrames],
+    ])
+
+    // Convert to Uint16Array
+    let frames: Uint16Array
+    if (frameData instanceof Uint16Array) {
+      frames = frameData
+    } else if (ArrayBuffer.isView(frameData)) {
+      frames = new Uint16Array(frameData.buffer, frameData.byteOffset, frameData.byteLength / 2)
+    } else if (Array.isArray(frameData)) {
+      const flatData = frameData.flat()
+      frames = new Uint16Array(flatData)
+    } else {
+      frames = new Uint16Array(frameData)
+    }
+
+    console.log(`✅ Read ${actualFrames} frames for ${numChannels} channels`)
+
     // Scale the raw frames to float16
     const scaledTraces = scaleRawFramesToFloat16(
       frames,
@@ -449,16 +504,31 @@ async function calculateInferenceScalingFromH5(
     )
 
     // Use existing calculateInferenceScaling logic
-    return calculateInferenceScaling(
+    const result = calculateInferenceScaling(
       scaledTraces,
       parameters.numChannels,
       actualFrames,
       actualFrames,
       inferenceScalingNumerator,
     )
-  }
 
-  throw new Error('Failed to read frames for inference scaling calculation')
+    // Close the file and unmount
+    h5.close()
+    FS.unmount('/work')
+
+    return result
+  } catch (error) {
+    console.error('❌ Error calculating inference scaling from h5 file:', error)
+
+    // Clean up on error
+    try {
+      FS.unmount('/work')
+    } catch (e) {
+      // Ignore unmount errors
+    }
+
+    throw error
+  }
 }
 
 /**
@@ -471,22 +541,56 @@ async function* runDetectionModelWithBenchmarkFromH5(
   detectSession: InferenceSession,
 ): AsyncGenerator<{ output: Float32Array; duration: number }, void, unknown> {
   const sampleSize = 200
-  const numOutputLocs = 120
+  // const numOutputLocs = 120
   const inputScale = 0.15887516
 
   const numChannels = parameters.numChannels
   const totalSamples = parameters.numSamples
 
-  // Process windows
-  for (let startFrame = 0; startFrame <= totalSamples - sampleSize; startFrame += numOutputLocs) {
-    const startTime = performance.now()
+  // Initialize h5wasm and handle mounting here
+  const Module = await h5wasm.ready
+  const { FS } = Module
 
-    // Stream this window from the h5 file
-    for await (const { frames, actualFrames } of streamRawFramesFromH5(
-      h5File,
-      startFrame,
-      sampleSize,
-    )) {
+  try {
+    // Mount the file to the filesystem
+    if (!FS.analyzePath('/work').exists) {
+      FS.mkdir('/work')
+    }
+    FS.mount(FS.filesystems.WORKERFS, { files: [h5File] }, '/work')
+
+    // Open the h5 file
+    const h5 = new h5wasm.File(`/work/${h5File.name}`, 'r') as H5File
+    const sig = h5.get('sig') as H5DataSet
+
+    // Process windows
+    for (let startFrame = 0; startFrame <= totalSamples - sampleSize; startFrame += sampleSize) {
+      const startTime = performance.now()
+
+      // Read this window from the h5 file
+      const endFrame = Math.min(startFrame + sampleSize, totalSamples)
+      const actualFrames = endFrame - startFrame
+
+      if (actualFrames <= 0) continue
+
+      // Read the data slice: [all channels, startFrame:endFrame]
+      const frameData = sig.slice([
+        [0, numChannels],
+        [startFrame, endFrame],
+      ])
+
+      // Convert to Uint16Array
+      let frames: Uint16Array
+      if (frameData instanceof Uint16Array) {
+        frames = frameData
+      } else if (ArrayBuffer.isView(frameData)) {
+        frames = new Uint16Array(frameData.buffer, frameData.byteOffset, frameData.byteLength / 2)
+      } else if (Array.isArray(frameData)) {
+        const flatData = frameData.flat()
+        frames = new Uint16Array(flatData)
+      } else {
+        frames = new Uint16Array(frameData)
+      }
+
       // Scale the raw frames
       const windowData = scaleRawFramesToFloat16(frames, parameters, numChannels, actualFrames)
 
@@ -523,8 +627,8 @@ async function* runDetectionModelWithBenchmarkFromH5(
       self.postMessage({
         type: 'processingProgress',
         message: 'Detecting spikes...',
-        countFinished: startFrame,
-        totalToProcess: totalSamples - sampleSize,
+        countFinished: startFrame + sampleSize,
+        totalToProcess: totalSamples,
       })
 
       yield {
@@ -532,6 +636,21 @@ async function* runDetectionModelWithBenchmarkFromH5(
         duration,
       }
     }
+
+    // Clean up
+    h5.close()
+    FS.unmount('/work')
+  } catch (error) {
+    console.error('❌ Error in detection model with h5 streaming:', error)
+
+    // Clean up on error
+    try {
+      FS.unmount('/work')
+    } catch (e) {
+      // Ignore unmount errors
+    }
+
+    throw error
   }
 }
 
