@@ -11,10 +11,43 @@
               accept=".h5"
               label="Select File"
               variant="outlined"
-              prepend-icon="mdi-file"
+              prepend-icon=""
               show-size
               @update:model-value="handleFileSelected"
             ></v-file-input>
+
+            <!-- File Parameters Display -->
+            <v-card v-if="fileParameters" variant="outlined" class="mt-4">
+              <v-card-title class="text-h6">File Parameters</v-card-title>
+              <v-card-text>
+                <v-row>
+                  <v-col cols="6" sm="4">
+                    <div class="text-caption">Channels</div>
+                    <div class="text-body-1">{{ fileParameters.numChannels }}</div>
+                  </v-col>
+                  <v-col cols="6" sm="4">
+                    <div class="text-caption">Frames</div>
+                    <div class="text-body-1">{{ fileParameters.numSamples }}</div>
+                  </v-col>
+                  <v-col cols="6" sm="4">
+                    <div class="text-caption">Duration</div>
+                    <div class="text-body-1">{{ fileParameters.duration.toFixed(2) }}s</div>
+                  </v-col>
+                  <v-col cols="6" sm="4">
+                    <div class="text-caption">Sampling Rate</div>
+                    <div class="text-body-1">{{ fileParameters.samplingRate }} Hz</div>
+                  </v-col>
+                  <v-col cols="6" sm="4">
+                    <div class="text-caption">LSB</div>
+                    <div class="text-body-1">{{ fileParameters.lsb }}</div>
+                  </v-col>
+                  <v-col cols="6" sm="4">
+                    <div class="text-caption">Gain</div>
+                    <div class="text-body-1">{{ fileParameters.gain }}</div>
+                  </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
 
             <v-switch
               v-model="useGPU"
@@ -78,13 +111,30 @@ const benchmarks = ref<{
 const errorMessage = ref<string | null>(null)
 
 const selectedFile = ref<File | null>(null)
+const fileParameters = ref<{
+  numChannels: number
+  numSamples: number
+  samplingRate: number
+  gain: number
+  lsb: number
+  duration: number
+} | null>(null)
 
 function handleFileSelected(files: File | File[]) {
   const file = Array.isArray(files) ? files[0] : files
   if (file) {
     selectedFile.value = file
+    fileParameters.value = null // Reset parameters
+    // Send message to worker to extract h5 file parameters
+    if (file.name.endsWith('.h5')) {
+      worker.value?.postMessage({
+        type: 'openFile',
+        file: file,
+      })
+    }
   } else {
     selectedFile.value = null
+    fileParameters.value = null
   }
 }
 
@@ -229,6 +279,10 @@ function initializeWorkers() {
       const { countFinished, totalToProcess } = event.data
       processingProgress.value = (countFinished / totalToProcess) * 100
       currentStatus.value = `Processing: ${countFinished} of ${totalToProcess} complete (${Math.round(processingProgress.value)}%)`
+    } else if (event.data.type === 'fileParameters') {
+      // Handle file parameters response
+      fileParameters.value = event.data.parameters
+      currentStatus.value = 'File parameters extracted'
     } else if (event.data.type === 'result') {
       running.value = false
       errorMessage.value = null
@@ -268,7 +322,27 @@ function handleRun() {
   if (!selectedFile.value) {
     errorMessage.value = 'Please select a file to start.'
     return
+  }
+
+  if (selectedFile.value.name.endsWith('.h5')) {
+    if (!fileParameters.value) {
+      errorMessage.value = 'File parameters not extracted yet. Please wait or reselect the file.'
+      return
+    }
+    // Use h5 workflow
+    running.value = true
+    errorMessage.value = null
+    benchmarks.value = null
+    currentStatus.value = 'Starting spike detector with h5 file...'
+    processingProgress.value = 0
+    worker.value?.postMessage({
+      type: 'runWithH5',
+      file: selectedFile.value,
+      modelsURL: `${window.location.href}models`,
+      useGPU: useGPU.value,
+    })
   } else {
+    // Use legacy workflow
     running.value = true
     errorMessage.value = null
     benchmarks.value = null
@@ -295,15 +369,23 @@ async function fetchSampleFile() {
     selectedFile.value = file
     currentStatus.value = 'Sample file loaded'
     console.log('Sample File:', file)
+
+    // Extract file parameters if it's an h5 file
+    if (file.name.endsWith('.h5') && worker.value) {
+      worker.value.postMessage({
+        type: 'openFile',
+        file: file,
+      })
+    }
   } catch (error) {
     console.error('Error loading sample file:', error)
     currentStatus.value = 'Error loading sample file'
   }
 }
 
-onMounted(() => {
-  fetchSampleFile()
+onMounted(async () => {
   initializeWorkers()
+  await fetchSampleFile()
   // errorMessage.value = 'Please select a file to start.'
 })
 </script>
