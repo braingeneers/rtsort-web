@@ -6,7 +6,7 @@ import { InferenceSession, Tensor, env } from 'onnxruntime-web'
 import h5wasm from 'h5wasm'
 
 interface PredictionMessage {
-  type: 'start' | 'openFile' | 'runWithH5'
+  type: 'start' | 'openFile' | 'runWithH5' | 'stop'
   modelsURL?: string
   useGPU?: boolean
   h5File?: File
@@ -194,6 +194,11 @@ async function* runDetectionModelWithBenchmark(
 
   // Process windows
   for (let startFrame = 0; startFrame <= totalSamples - sampleSize; startFrame += numOutputLocs) {
+    if (shouldStop) {
+      console.log('🛑 Detection window processing stopped')
+      return
+    }
+
     const startTime = performance.now()
 
     // Extract and process window data for each channel
@@ -329,83 +334,6 @@ async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> 
   }
 }
 
-// /**
-//  * Stream raw uint16 frames from h5 file
-//  */
-// async function* streamRawFramesFromH5(
-//   h5File: File,
-//   startFrame: number = 0,
-//   numFrames: number = 1000,
-// ): AsyncGenerator<{ frames: Uint16Array; actualFrames: number }, void, unknown> {
-//   console.log(`🔄 Streaming ${numFrames} frames starting at ${startFrame}...`)
-
-//   // Initialize h5wasm
-//   const Module = await h5wasm.ready
-//   const { FS } = Module
-
-//   try {
-//     // Mount the file to the filesystem
-//     if (!FS.analyzePath('/work').exists) {
-//       FS.mkdir('/work')
-//     }
-//     FS.mount(FS.filesystems.WORKERFS, { files: [h5File] }, '/work')
-
-//     // Open the h5 file
-//     const h5 = new h5wasm.File(`/work/${h5File.name}`, 'r') as H5File
-//     const sig = h5.get('sig') as H5DataSet
-//     const [numChannels, totalSamples] = sig.shape
-
-//     // Ensure we don't read beyond the file
-//     const endFrame = Math.min(startFrame + numFrames, totalSamples)
-//     const actualFrames = endFrame - startFrame
-
-//     if (actualFrames <= 0) {
-//       console.log('No frames to read')
-//       return
-//     }
-
-//     // Read the data slice: [all channels, startFrame:endFrame]
-//     const frameData = sig.slice([
-//       [0, numChannels],
-//       [startFrame, endFrame],
-//     ])
-
-//     // Convert to Uint16Array - handle different possible return types from h5wasm
-//     let frames: Uint16Array
-//     if (frameData instanceof Uint16Array) {
-//       frames = frameData
-//     } else if (ArrayBuffer.isView(frameData)) {
-//       frames = new Uint16Array(frameData.buffer, frameData.byteOffset, frameData.byteLength / 2)
-//     } else if (Array.isArray(frameData)) {
-//       // If it's a nested array, flatten it first
-//       const flatData = frameData.flat()
-//       frames = new Uint16Array(flatData)
-//     } else {
-//       // Fallback: try to convert directly
-//       frames = new Uint16Array(frameData)
-//     }
-
-//     console.log(`✅ Read ${actualFrames} frames for ${numChannels} channels`)
-
-//     yield { frames, actualFrames }
-
-//     // Close the file
-//     h5.close()
-//     FS.unmount('/work')
-//   } catch (error) {
-//     console.error('❌ Error streaming frames from h5 file:', error)
-
-//     // Clean up on error
-//     try {
-//       FS.unmount('/work')
-//     } catch (e) {
-//       // Ignore unmount errors
-//     }
-
-//     throw error
-//   }
-// }
-
 /**
  * Scale raw uint16 frames to physical values and then to scaled traces
  * @param rawFrames - Raw uint16 frames from h5 file
@@ -420,8 +348,6 @@ function scaleRawFramesToFloat16(
   numChannels: number,
   numFrames: number,
 ): Float16Array {
-  console.log(`🔄 Scaling ${numChannels} channels x ${numFrames} frames...`)
-
   // Convert raw uint16 to physical values (microvolts)
   // REMIND: lsb must imply the 1e6...spelunk into:
   // https://github.com/SpikeInterface/spikeinterface/blob/fb3bda89828134800938f33e7d7d938872f01fbd/src/spikeinterface/extractors/neoextractors/neobaseextractor.py#L249
@@ -436,7 +362,6 @@ function scaleRawFramesToFloat16(
     scaledTraces[i] = physicalValue
   }
 
-  console.log(`✅ Scaling completed`)
   return scaledTraces
 }
 
@@ -564,6 +489,11 @@ async function* runDetectionModelWithBenchmarkFromH5(
 
     // Process windows
     for (let startFrame = 0; startFrame <= totalSamples - sampleSize; startFrame += sampleSize) {
+      if (shouldStop) {
+        console.log('🛑 H5 detection window processing stopped')
+        return
+      }
+
       const startTime = performance.now()
 
       // Read this window from the h5 file
@@ -654,8 +584,17 @@ async function* runDetectionModelWithBenchmarkFromH5(
   }
 }
 
+let shouldStop = false
+
 self.addEventListener('message', async function (event: MessageEvent<PredictionMessage>) {
+  if (event.data.type === 'stop') {
+    console.log('🛑 Received stop message')
+    shouldStop = true
+    return
+  }
+
   if (event.data.type === 'start') {
+    shouldStop = false
     console.log('Received start message')
     console.log('Model URL:', event.data.modelsURL)
     console.log('Use GPU:', event.data.useGPU ?? false)
@@ -712,6 +651,11 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
         numChannels,
         totalSamples,
       )) {
+        if (shouldStop) {
+          console.log('🛑 Detection stopped by user')
+          self.postMessage({ type: 'stopped' })
+          return
+        }
         detectionResults.push(output)
         benchmarks.push(duration)
       }
@@ -822,6 +766,11 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
         inferenceScalingValue,
         detectSession,
       )) {
+        if (shouldStop) {
+          console.log('🛑 Detection stopped by user')
+          self.postMessage({ type: 'stopped' })
+          return
+        }
         detectionResults.push(output)
         benchmarks.push(duration)
       }

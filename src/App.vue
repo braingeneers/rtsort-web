@@ -60,13 +60,17 @@
 
             <div class="mt-4">
               <v-btn
+                v-if="!running"
                 @click="handleRun"
                 color="primary"
                 class="mr-2"
-                :disabled="parsingFile || running"
+                :disabled="parsingFile"
                 data-cy="run-button"
               >
-                {{ running ? 'Running...' : 'Run' }}
+                Run
+              </v-btn>
+              <v-btn v-else @click="handleStop" color="error" class="mr-2" data-cy="stop-button">
+                Stop
               </v-btn>
               <v-chip :color="useGPU ? 'green' : 'blue'" size="small">
                 {{ useGPU ? 'GPU' : 'CPU' }}
@@ -288,6 +292,13 @@ function initializeWorkers() {
       parsingFile.value = false
       errorMessage.value = null
       currentStatus.value = 'File parameters extracted'
+    } else if (event.data.type === 'stopped') {
+      // Handle stopped message from worker
+      running.value = false
+      errorMessage.value = null
+      currentStatus.value = 'Processing stopped by user'
+      processingProgress.value = 0
+      console.log('Processing stopped by user')
     } else if (event.data.type === 'result') {
       running.value = false
       errorMessage.value = null
@@ -321,6 +332,25 @@ function initializeWorkers() {
     errorMessage.value = `Worker error: ${error.message}`
     console.error('Worker error:', error)
   }
+}
+
+function handleStop() {
+  console.log('🛑 Stopping worker...')
+
+  // Terminate the current worker
+  if (worker.value) {
+    worker.value.terminate()
+    worker.value = null
+  }
+
+  // Reset state
+  running.value = false
+  processingProgress.value = 0
+  currentStatus.value = 'Processing stopped'
+  errorMessage.value = null
+
+  // Re-initialize worker for future use
+  initializeWorkers()
 }
 
 function handleRun() {
