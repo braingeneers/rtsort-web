@@ -118,7 +118,7 @@
           <v-chip :color="processingMode === 'gpu' ? 'green' : 'blue'" size="small">
             {{ processingMode === 'gpu' ? 'GPU' : 'CPU' }}
           </v-chip>
-          <div class="text-caption mt-4">{{ currentStatus }}</div>
+          <div data-cy="status" class="text-caption mt-4">{{ currentStatus }}</div>
         </div>
         <div v-if="running" class="pa-2">
           <v-progress-linear
@@ -319,7 +319,7 @@ function handleFileSelected(files: File | File[]) {
     // Send message to worker to extract h5 file parameters
     if (file.name.endsWith('.h5')) {
       worker.value?.postMessage({
-        type: 'openFile',
+        type: 'open',
         file: file,
       })
     }
@@ -597,23 +597,13 @@ function handleRun() {
     currentStatus.value = 'Starting spike detector with h5 file...'
     processingProgress.value = 0
     worker.value?.postMessage({
-      type: 'runWithH5',
+      type: 'run',
       file: selectedFile.value,
       modelsURL: `${window.location.href}models`,
       useGPU: useGPU.value,
     })
   } else {
-    // Use legacy workflow
-    running.value = true
-    errorMessage.value = null
-    benchmarks.value = null
-    currentStatus.value = 'Starting spike detector...'
-    processingProgress.value = 0
-    worker.value?.postMessage({
-      type: 'start',
-      modelsURL: `${window.location.href}models`,
-      useGPU: useGPU.value,
-    })
+    errorMessage.value = 'Unsupported file type. Please select a Maxwell raw .h5 file.'
   }
 }
 
@@ -669,7 +659,7 @@ async function fetchSampleFile() {
     // Extract file parameters if it's an h5 file
     if (file.name.endsWith('.h5') && worker.value) {
       worker.value.postMessage({
-        type: 'openFile',
+        type: 'open',
         file: file,
       })
     }
