@@ -609,8 +609,12 @@ async function* runDetectionModelWithBenchmarkFromH5(
     console.log(`📦 File is chunked: [${parameters.chunkSize.join(', ')}]`)
   }
 
-  // Realtime processing metrics
-  let processedFrames = 0
+  // Performance tracking metrics
+  let totalSamplesRead = 0      // Total samples read from file (frames × channels)
+  let totalSamplesProcessed = 0 // Total samples processed through model (frames × channels)
+  let totalReadTime = 0         // Total time spent reading from file (ms)
+  let totalProcessTime = 0      // Total time spent processing/inference (ms)
+  
   let startTime = performance.now()
   let lastReportTime = startTime
   const reportInterval = 1000 // Report every 1 second
@@ -639,6 +643,9 @@ async function* runDetectionModelWithBenchmarkFromH5(
 
       const windowStartTime = performance.now()
 
+      // === FILE READING PHASE ===
+      const readStartTime = performance.now()
+      
       // Read this window from the h5 file using optimized pattern
       const endFrame = Math.min(startFrame + sampleSize, totalSamples)
       const actualFrames = endFrame - startFrame
@@ -654,6 +661,14 @@ async function* runDetectionModelWithBenchmarkFromH5(
         totalSamples,
         parameters.storageLayout,
       )
+
+      const readEndTime = performance.now()
+      const readDuration = readEndTime - readStartTime
+      totalReadTime += readDuration
+      totalSamplesRead += actualFrames * numChannels
+
+      // === PROCESSING PHASE ===
+      const processStartTime = performance.now()
 
       // Scale the raw frames
       const windowData = scaleRawFramesToFloat16(frames, parameters, numChannels, actualFrames)
@@ -684,34 +699,54 @@ async function* runDetectionModelWithBenchmarkFromH5(
       // Run detection model
       const results = await detectSession.run({ input: inputTensor })
 
+      const processEndTime = performance.now()
+      const processDuration = processEndTime - processStartTime
+      totalProcessTime += processDuration
+      totalSamplesProcessed += actualFrames * numChannels
+
       const windowEndTime = performance.now()
       const windowDuration = windowEndTime - windowStartTime
-
-      // Update processed frames (each frame contains all channels)
-      processedFrames += actualFrames
 
       // Check if it's time to report realtime capacity
       const currentTime = performance.now()
       if (currentTime - lastReportTime >= reportInterval) {
         const elapsedSeconds = (currentTime - startTime) / 1000
-        const framesPerSecond = processedFrames / elapsedSeconds
+        
+        // Calculate throughput rates (samples per second)
+        const readSamplesPerSecond = totalSamplesRead / (totalReadTime / 1000)
+        const processSamplesPerSecond = totalSamplesProcessed / (totalProcessTime / 1000)
+        const overallSamplesPerSecond = totalSamplesProcessed / elapsedSeconds
+        
+        // Calculate realtime channel capacities
+        const readChannelCapacity = readSamplesPerSecond / samplingRate
+        const processChannelCapacity = processSamplesPerSecond / samplingRate
+        const overallChannelCapacity = overallSamplesPerSecond / samplingRate
+        
+        // Calculate time distribution percentages
+        const totalActiveTime = totalReadTime + totalProcessTime
+        const readPercentage = totalActiveTime > 0 ? (totalReadTime / totalActiveTime) * 100 : 0
+        const processPercentage = totalActiveTime > 0 ? (totalProcessTime / totalActiveTime) * 100 : 0
 
-        // Calculate how many channels could be processed in realtime
-        // Each frame contains all channels, so if we process framesPerSecond frames,
-        // and each frame contains numChannels channels, then we're processing
-        // framesPerSecond * numChannels channel-samples per second.
-        // For realtime, we need samplingRate frames per second.
-        // So realtime capacity = (framesPerSecond / samplingRate) * numChannels
-        const realtimeChannelCapacity = (framesPerSecond / samplingRate) * numChannels
-
-        // Send realtime capacity update to main thread
+        // Send comprehensive performance update to main thread
         self.postMessage({
           type: 'realtimeCapacity',
-          capacity: realtimeChannelCapacity,
-          framesPerSecond: framesPerSecond,
-          samplesPerSecond: framesPerSecond * numChannels,
+          // Overall metrics
+          capacity: overallChannelCapacity,
+          samplesPerSecond: overallSamplesPerSecond,
+          // Breakdown by phase
+          readChannelCapacity: readChannelCapacity,
+          processChannelCapacity: processChannelCapacity,
+          readSamplesPerSecond: readSamplesPerSecond,
+          processSamplesPerSecond: processSamplesPerSecond,
+          // Time distribution
+          readPercentage: readPercentage,
+          processPercentage: processPercentage,
+          totalReadTime: totalReadTime,
+          totalProcessTime: totalProcessTime,
+          // Context
           totalChannels: numChannels,
           samplingRate: samplingRate,
+          elapsedSeconds: elapsedSeconds,
         })
 
         lastReportTime = currentTime
