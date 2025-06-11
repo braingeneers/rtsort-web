@@ -51,11 +51,28 @@
                   {{ fileParameters.storageLayout }}
                   <v-chip
                     size="x-small"
-                    :color="fileParameters.storageLayout === 'row-major' ? 'green' : 'orange'"
-                    class="ml-2"
+                    :color="fileParameters.isChunked ? 'blue' : 'grey'"
+                    class="ml-1"
                   >
                     {{ fileParameters.isChunked ? 'chunked' : 'contiguous' }}
                   </v-chip>
+                  <v-chip
+                    v-if="fileParameters.fileFormat"
+                    size="x-small"
+                    :color="
+                      fileParameters.fileFormat === 'maxwell'
+                        ? 'green'
+                        : fileParameters.fileFormat === 'nwb'
+                          ? 'purple'
+                          : 'orange'
+                    "
+                    class="ml-1"
+                  >
+                    {{ fileParameters.fileFormat }}
+                  </v-chip>
+                </div>
+                <div v-if="fileParameters.chunkSize" class="text-caption text-medium-emphasis">
+                  Chunks: [{{ fileParameters.chunkSize.join(' × ') }}]
                 </div>
               </v-col>
             </v-row>
@@ -225,6 +242,8 @@ const fileParameters = ref<{
   duration: number
   storageLayout: 'row-major' | 'column-major'
   isChunked: boolean
+  chunkSize?: number[]
+  fileFormat?: 'maxwell' | 'nwb' | 'unknown'
 } | null>(null)
 
 function handleFileSelected(files: File | File[]) {

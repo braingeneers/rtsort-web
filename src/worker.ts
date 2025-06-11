@@ -24,6 +24,7 @@ interface H5FileParameters {
   storageLayout: 'row-major' | 'column-major'
   chunkSize?: number[]
   isChunked: boolean
+  fileFormat?: 'maxwell' | 'nwb' | 'unknown'
 }
 
 interface H5DataSet {
@@ -252,20 +253,24 @@ async function* runDetectionModelWithBenchmark(
 /**
  * Detect HDF5 dataset storage layout and chunking information
  */
-function detectStorageLayout(dataset: H5DataSet): {
+function detectStorageLayout(
+  dataset: H5DataSet,
+  filePath?: string,
+): {
   layout: 'row-major' | 'column-major'
   chunkSize?: number[]
   isChunked: boolean
+  fileFormat?: 'maxwell' | 'nwb' | 'unknown'
 } {
   try {
     // Check if dataset has chunking information
     // h5wasm may expose this through dataset properties
     const datasetInfo = dataset as any
-    
+
     // Check for chunk information (this is implementation-specific to h5wasm)
     let chunkSize: number[] | undefined
     let isChunked = false
-    
+
     if (datasetInfo.chunks) {
       chunkSize = datasetInfo.chunks
       isChunked = true
@@ -273,32 +278,48 @@ function detectStorageLayout(dataset: H5DataSet): {
       chunkSize = datasetInfo.chunk_size
       isChunked = true
     }
-    
+
+    // Detect file format for better heuristics
+    const isNWB =
+      filePath?.toLowerCase().includes('nwb') || filePath?.toLowerCase().endsWith('.nwb')
+    const isMaxwell =
+      filePath?.toLowerCase().includes('maxwell') || filePath?.toLowerCase().includes('mea')
+
+    let fileFormat: 'maxwell' | 'nwb' | 'unknown' = 'unknown'
+    if (isNWB) fileFormat = 'nwb'
+    else if (isMaxwell) fileFormat = 'maxwell'
+
     // Determine layout based on chunk pattern or shape
     // For MEA data: [channels, samples] suggests row-major (C-order)
     // [samples, channels] suggests column-major (Fortran-order)
     const [dim0, dim1] = dataset.shape
-    
+
     // Heuristic: if first dimension is much smaller than second,
     // likely channels x samples (row-major)
     // Maxwell typically stores as [channels, samples]
     let layout: 'row-major' | 'column-major'
-    
+
     if (chunkSize) {
-      // If chunked, analyze chunk pattern
       const [chunkDim0, chunkDim1] = chunkSize
-      // If chunks are wider than tall, suggests samples are contiguous (row-major)
       layout = chunkDim1 > chunkDim0 ? 'row-major' : 'column-major'
     } else {
-      // For Maxwell data, channels (942) < samples (typically much larger)
-      // so [942, samples] indicates row-major storage
-      layout = dim0 < dim1 ? 'row-major' : 'column-major'
+      // Format-specific heuristics
+      if (fileFormat === 'nwb') {
+        // NWB typically uses (time, channels), so if dim0 >> dim1, likely column-major
+        layout = dim0 > dim1 ? 'column-major' : 'row-major'
+      } else if (fileFormat === 'maxwell') {
+        // Maxwell typically uses (channels, time), so if dim0 < dim1, likely row-major
+        layout = dim0 < dim1 ? 'row-major' : 'column-major'
+      } else {
+        // Default heuristic
+        layout = dim0 < dim1 ? 'row-major' : 'column-major'
+      }
     }
-    
-    return { layout, chunkSize, isChunked }
+
+    return { layout, chunkSize, isChunked, fileFormat }
   } catch (error) {
     console.warn('Could not detect storage layout, assuming row-major:', error)
-    return { layout: 'row-major', isChunked: false }
+    return { layout: 'row-major', isChunked: false, fileFormat: 'unknown' }
   }
 }
 
@@ -325,7 +346,7 @@ async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> 
     // Get signal data shape and storage info
     const sig = h5.get('sig') as H5DataSet
     const [numChannels, numSamples] = sig.shape
-    const storageInfo = detectStorageLayout(sig)
+    const storageInfo = detectStorageLayout(sig, h5File.name)
 
     // Get settings
     const settings = h5.get('settings') as H5Group
@@ -371,10 +392,13 @@ async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> 
       storageLayout: storageInfo.layout,
       chunkSize: storageInfo.chunkSize,
       isChunked: storageInfo.isChunked,
+      fileFormat: storageInfo.fileFormat,
     }
 
     console.log('📊 H5 File Parameters:', parameters)
-    console.log(`💾 Storage Layout: ${storageInfo.layout}, Chunked: ${storageInfo.isChunked}`)
+    console.log(
+      `💾 Storage Layout: ${storageInfo.layout}, Chunked: ${storageInfo.isChunked}, Format: ${storageInfo.fileFormat}`,
+    )
     if (storageInfo.chunkSize) {
       console.log(`📦 Chunk Size: [${storageInfo.chunkSize.join(', ')}]`)
     }
@@ -529,10 +553,10 @@ function readWindowOptimized(
   windowSize: number,
   numChannels: number,
   totalSamples: number,
-  layout: 'row-major' | 'column-major'
+  layout: 'row-major' | 'column-major',
 ): Uint16Array {
   const endFrame = Math.min(startFrame + windowSize, totalSamples)
-  
+
   if (layout === 'row-major') {
     // Data stored as [channels, samples] - each channel's data is contiguous
     // Read all channels for the window: [0:numChannels, startFrame:endFrame]
@@ -547,18 +571,18 @@ function readWindowOptimized(
       [startFrame, endFrame],
       [0, numChannels],
     ])
-    
+
     // Need to transpose the data to match expected [channels, samples] format
     const actualFrames = endFrame - startFrame
     const transposed = new Uint16Array(numChannels * actualFrames)
-    
+
     for (let channel = 0; channel < numChannels; channel++) {
       for (let frame = 0; frame < actualFrames; frame++) {
         // Source: [frame, channel], Dest: [channel, frame]
         transposed[channel * actualFrames + frame] = windowData[frame * numChannels + channel]
       }
     }
-    
+
     return transposed
   }
 }
@@ -628,7 +652,7 @@ async function* runDetectionModelWithBenchmarkFromH5(
         sampleSize,
         numChannels,
         totalSamples,
-        parameters.storageLayout
+        parameters.storageLayout,
       )
 
       // Scale the raw frames
