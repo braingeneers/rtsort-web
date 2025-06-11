@@ -183,20 +183,20 @@
                       :style="{
                         width: `${readPercentage || 0}%`,
                         backgroundColor: '#1976d2',
-                        minWidth: readPercentage > 10 ? 'auto' : '0px',
+                        minWidth: (readPercentage || 0) > 10 ? 'auto' : '0px',
                       }"
                     >
-                      {{ readPercentage > 10 ? 'File I/O' : '' }}
+                      {{ (readPercentage || 0) > 10 ? 'File I/O' : '' }}
                     </div>
                     <div
                       class="d-flex align-center justify-center text-white text-caption"
                       :style="{
                         width: `${processPercentage || 0}%`,
                         backgroundColor: '#388e3c',
-                        minWidth: processPercentage > 10 ? 'auto' : '0px',
+                        minWidth: (processPercentage || 0) > 10 ? 'auto' : '0px',
                       }"
                     >
-                      {{ processPercentage > 10 ? 'Processing' : '' }}
+                      {{ (processPercentage || 0) > 10 ? 'Processing' : '' }}
                     </div>
                   </div>
                 </template>
