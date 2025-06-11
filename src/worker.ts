@@ -21,6 +21,9 @@ interface H5FileParameters {
   gain: number
   lsb: number
   hpf?: number
+  storageLayout: 'row-major' | 'column-major'
+  chunkSize?: number[]
+  isChunked: boolean
 }
 
 interface H5DataSet {
@@ -247,6 +250,59 @@ async function* runDetectionModelWithBenchmark(
 }
 
 /**
+ * Detect HDF5 dataset storage layout and chunking information
+ */
+function detectStorageLayout(dataset: H5DataSet): {
+  layout: 'row-major' | 'column-major'
+  chunkSize?: number[]
+  isChunked: boolean
+} {
+  try {
+    // Check if dataset has chunking information
+    // h5wasm may expose this through dataset properties
+    const datasetInfo = dataset as any
+    
+    // Check for chunk information (this is implementation-specific to h5wasm)
+    let chunkSize: number[] | undefined
+    let isChunked = false
+    
+    if (datasetInfo.chunks) {
+      chunkSize = datasetInfo.chunks
+      isChunked = true
+    } else if (datasetInfo.chunk_size) {
+      chunkSize = datasetInfo.chunk_size
+      isChunked = true
+    }
+    
+    // Determine layout based on chunk pattern or shape
+    // For MEA data: [channels, samples] suggests row-major (C-order)
+    // [samples, channels] suggests column-major (Fortran-order)
+    const [dim0, dim1] = dataset.shape
+    
+    // Heuristic: if first dimension is much smaller than second,
+    // likely channels x samples (row-major)
+    // Maxwell typically stores as [channels, samples]
+    let layout: 'row-major' | 'column-major'
+    
+    if (chunkSize) {
+      // If chunked, analyze chunk pattern
+      const [chunkDim0, chunkDim1] = chunkSize
+      // If chunks are wider than tall, suggests samples are contiguous (row-major)
+      layout = chunkDim1 > chunkDim0 ? 'row-major' : 'column-major'
+    } else {
+      // For Maxwell data, channels (942) < samples (typically much larger)
+      // so [942, samples] indicates row-major storage
+      layout = dim0 < dim1 ? 'row-major' : 'column-major'
+    }
+    
+    return { layout, chunkSize, isChunked }
+  } catch (error) {
+    console.warn('Could not detect storage layout, assuming row-major:', error)
+    return { layout: 'row-major', isChunked: false }
+  }
+}
+
+/**
  * Extract file parameters from Maxwell h5 file
  */
 async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> {
@@ -266,9 +322,10 @@ async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> 
     // Open the h5 file
     const h5 = new h5wasm.File(`/work/${h5File.name}`, 'r') as H5File
 
-    // Get signal data shape
+    // Get signal data shape and storage info
     const sig = h5.get('sig') as H5DataSet
     const [numChannels, numSamples] = sig.shape
+    const storageInfo = detectStorageLayout(sig)
 
     // Get settings
     const settings = h5.get('settings') as H5Group
@@ -311,9 +368,16 @@ async function extractH5FileParameters(h5File: File): Promise<H5FileParameters> 
       gain,
       lsb,
       hpf,
+      storageLayout: storageInfo.layout,
+      chunkSize: storageInfo.chunkSize,
+      isChunked: storageInfo.isChunked,
     }
 
     console.log('📊 H5 File Parameters:', parameters)
+    console.log(`💾 Storage Layout: ${storageInfo.layout}, Chunked: ${storageInfo.isChunked}`)
+    if (storageInfo.chunkSize) {
+      console.log(`📦 Chunk Size: [${storageInfo.chunkSize.join(', ')}]`)
+    }
 
     // Close the file for now
     h5.close()
@@ -457,6 +521,49 @@ async function calculateInferenceScalingFromH5(
 }
 
 /**
+ * Optimized window reading based on storage layout
+ */
+function readWindowOptimized(
+  sig: H5DataSet,
+  startFrame: number,
+  windowSize: number,
+  numChannels: number,
+  totalSamples: number,
+  layout: 'row-major' | 'column-major'
+): Uint16Array {
+  const endFrame = Math.min(startFrame + windowSize, totalSamples)
+  
+  if (layout === 'row-major') {
+    // Data stored as [channels, samples] - each channel's data is contiguous
+    // Read all channels for the window: [0:numChannels, startFrame:endFrame]
+    return sig.slice([
+      [0, numChannels],
+      [startFrame, endFrame],
+    ])
+  } else {
+    // Data stored as [samples, channels] - sample points are contiguous
+    // Read the window then transpose: [startFrame:endFrame, 0:numChannels]
+    const windowData = sig.slice([
+      [startFrame, endFrame],
+      [0, numChannels],
+    ])
+    
+    // Need to transpose the data to match expected [channels, samples] format
+    const actualFrames = endFrame - startFrame
+    const transposed = new Uint16Array(numChannels * actualFrames)
+    
+    for (let channel = 0; channel < numChannels; channel++) {
+      for (let frame = 0; frame < actualFrames; frame++) {
+        // Source: [frame, channel], Dest: [channel, frame]
+        transposed[channel * actualFrames + frame] = windowData[frame * numChannels + channel]
+      }
+    }
+    
+    return transposed
+  }
+}
+
+/**
  * Re-implement runDetectionModelWithBenchmark to work with h5 streaming
  */
 async function* runDetectionModelWithBenchmarkFromH5(
@@ -471,6 +578,12 @@ async function* runDetectionModelWithBenchmarkFromH5(
   const numChannels = parameters.numChannels
   const totalSamples = parameters.numSamples
   const samplingRate = parameters.samplingRate
+
+  // Log storage optimization info
+  console.log(`💾 Using ${parameters.storageLayout} optimized reading`)
+  if (parameters.isChunked && parameters.chunkSize) {
+    console.log(`📦 File is chunked: [${parameters.chunkSize.join(', ')}]`)
+  }
 
   // Realtime processing metrics
   let processedFrames = 0
@@ -502,30 +615,21 @@ async function* runDetectionModelWithBenchmarkFromH5(
 
       const windowStartTime = performance.now()
 
-      // Read this window from the h5 file
+      // Read this window from the h5 file using optimized pattern
       const endFrame = Math.min(startFrame + sampleSize, totalSamples)
       const actualFrames = endFrame - startFrame
 
       if (actualFrames <= 0) continue
 
-      // Read the data slice: [all channels, startFrame:endFrame]
-      const frameData = sig.slice([
-        [0, numChannels],
-        [startFrame, endFrame],
-      ])
-
-      // Convert to Uint16Array
-      let frames: Uint16Array
-      if (frameData instanceof Uint16Array) {
-        frames = frameData
-      } else if (ArrayBuffer.isView(frameData)) {
-        frames = new Uint16Array(frameData.buffer, frameData.byteOffset, frameData.byteLength / 2)
-      } else if (Array.isArray(frameData)) {
-        const flatData = frameData.flat()
-        frames = new Uint16Array(flatData)
-      } else {
-        frames = new Uint16Array(frameData)
-      }
+      // Use optimized reading based on storage layout
+      const frames = readWindowOptimized(
+        sig,
+        startFrame,
+        sampleSize,
+        numChannels,
+        totalSamples,
+        parameters.storageLayout
+      )
 
       // Scale the raw frames
       const windowData = scaleRawFramesToFloat16(frames, parameters, numChannels, actualFrames)

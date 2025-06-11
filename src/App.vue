@@ -45,6 +45,19 @@
                 <div class="text-caption">Gain</div>
                 <div class="text-body-1">{{ fileParameters.gain }}</div>
               </v-col>
+              <v-col cols="6" sm="4">
+                <div class="text-caption">Storage Layout</div>
+                <div class="text-body-1">
+                  {{ fileParameters.storageLayout }}
+                  <v-chip
+                    size="x-small"
+                    :color="fileParameters.storageLayout === 'row-major' ? 'green' : 'orange'"
+                    class="ml-2"
+                  >
+                    {{ fileParameters.isChunked ? 'chunked' : 'contiguous' }}
+                  </v-chip>
+                </div>
+              </v-col>
             </v-row>
           </v-card-text>
         </v-card>
@@ -210,6 +223,8 @@ const fileParameters = ref<{
   gain: number
   lsb: number
   duration: number
+  storageLayout: 'row-major' | 'column-major'
+  isChunked: boolean
 } | null>(null)
 
 function handleFileSelected(files: File | File[]) {
