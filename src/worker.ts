@@ -388,15 +388,15 @@ function scaleRawFramesToFloat16(
 }
 
 /**
- * Re-implement calculateInferenceScaling to work with h5 streaming
+ * Re-implement calculateInferenceScaling to work with h5 streaming and return validation data
  */
-async function calculateInferenceScalingFromH5(
+async function calculateInferenceScalingFromH5WithValidation(
   h5File: File,
   parameters: H5FileParameters,
   preMedianFrames: number = 1000,
   inferenceScalingNumerator: number = 12.6,
-): Promise<number> {
-  console.log('🔄 Calculating inference scaling from h5 file...')
+): Promise<{ inferenceScaling: number; rawFrames: Uint16Array; scaledTraces: Float16Array }> {
+  console.log('🔄 Calculating inference scaling from h5 file with validation...')
 
   // Initialize h5wasm and handle mounting here
   const Module = await h5wasm.ready
@@ -451,7 +451,7 @@ async function calculateInferenceScalingFromH5(
     )
 
     // Use existing calculateInferenceScaling logic
-    const result = calculateInferenceScaling(
+    const inferenceScaling = calculateInferenceScaling(
       scaledTraces,
       parameters.numChannels,
       actualFrames,
@@ -463,7 +463,7 @@ async function calculateInferenceScalingFromH5(
     h5.close()
     FS.unmount('/work')
 
-    return result
+    return { inferenceScaling, rawFrames: frames, scaledTraces }
   } catch (error) {
     console.error('❌ Error calculating inference scaling from h5 file:', error)
 
@@ -521,6 +521,317 @@ function readWindowOptimized(
   }
 }
 
+// Number of values to retain for validation
+const N_VALIDATION_VALUES = 10
+
+interface ValidationReference {
+  metadata: {
+    h5_file: string
+    model_path: string
+    generated_by: string
+    description: string
+  }
+  constants: {
+    inference_scaling_numerator: number
+    pre_median_frames: number
+    sample_size: number
+    num_output_locs: number
+    input_scale: number
+    buffer_front_sample: number
+    buffer_end_sample: number
+    n_validation_values: number
+  }
+  h5_file_parameters: {
+    h5_file_path: string
+    num_channels: number
+    num_samples: number
+    sampling_rate: number
+    duration: number
+    gain: number
+    lsb: number
+    hpf: number
+    has_scaled_traces: boolean
+    channel_gains: number[]
+  }
+  computed_values: {
+    inference_scaling: number
+    median_iqr: number
+    iqrs_first_n: number[]
+    iqrs_stats: {
+      mean: number
+      std: number
+      min: number
+      max: number
+    }
+  }
+  sample_values: {
+    raw_channel_0: number[]
+    scaled_channel_0: number[]
+    model_input_channel_0: number[]
+    model_output_channel_0: number[]
+  }
+  model_processing: {
+    window_start_frame: number
+    window_end_frame: number
+    num_channels: number
+    window_data: number[][]
+  }
+}
+
+/**
+ * Validate H5 file parameters against reference
+ */
+function validateH5Parameters(
+  parameters: H5FileParameters,
+  reference: ValidationReference,
+  tolerance: number = 1e-6,
+): boolean {
+  console.log('🔍 Validating H5 file parameters...')
+
+  const ref = reference.h5_file_parameters
+  let isValid = true
+
+  // Check core parameters
+  if (parameters.numChannels !== ref.num_channels) {
+    console.error(`❌ Channel count mismatch: ${parameters.numChannels} vs ${ref.num_channels}`)
+    isValid = false
+  }
+
+  if (Math.abs(parameters.samplingRate - ref.sampling_rate) > tolerance) {
+    console.error(`❌ Sampling rate mismatch: ${parameters.samplingRate} vs ${ref.sampling_rate}`)
+    isValid = false
+  }
+
+  if (Math.abs(parameters.gain - ref.gain) > tolerance) {
+    console.error(`❌ Gain mismatch: ${parameters.gain} vs ${ref.gain}`)
+    isValid = false
+  }
+
+  if (Math.abs(parameters.lsb - ref.lsb) > tolerance) {
+    console.error(`❌ LSB mismatch: ${parameters.lsb} vs ${ref.lsb}`)
+    isValid = false
+  }
+
+  if (
+    parameters.hpf !== undefined &&
+    ref.hpf !== undefined &&
+    Math.abs(parameters.hpf - ref.hpf) > tolerance
+  ) {
+    console.error(`❌ HPF mismatch: ${parameters.hpf} vs ${ref.hpf}`)
+    isValid = false
+  }
+
+  if (isValid) {
+    console.log('✅ H5 file parameters validation passed')
+  }
+
+  return isValid
+}
+
+/**
+ * Validate raw H5 values against reference
+ */
+function validateRawValues(
+  rawFrames: Uint16Array,
+  parameters: H5FileParameters,
+  reference: ValidationReference,
+  tolerance: number = 1e-3,
+): boolean {
+  console.log('🔍 Validating raw H5 values...')
+
+  // Convert raw values to physical values using same scaling as worker
+  const scalingFactor = parameters.lsb * 1e6
+
+  // Check first N_VALIDATION_VALUES values of channel 0
+  const channel0Values: number[] = []
+
+  for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+    channel0Values.push(rawFrames[i] * scalingFactor)
+  }
+
+  let isValid = true
+
+  // Compare with reference
+  for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+    if (Math.abs(channel0Values[i] - reference.sample_values.raw_channel_0[i]) > tolerance) {
+      console.error(
+        `❌ Channel 0 raw value ${i} mismatch: ${channel0Values[i]} vs ${reference.sample_values.raw_channel_0[i]}`,
+      )
+      isValid = false
+    }
+  }
+
+  if (isValid) {
+    console.log('✅ Raw H5 values validation passed')
+  }
+
+  return isValid
+}
+
+/**
+ * Validate inference scaling calculation against reference
+ */
+function validateInferenceScaling(
+  computedScaling: number,
+  reference: ValidationReference,
+  tolerance: number = 1e-6,
+): boolean {
+  console.log('🔍 Validating inference scaling...')
+
+  const expectedScaling = reference.computed_values.inference_scaling
+  const isValid = Math.abs(computedScaling - expectedScaling) <= tolerance
+
+  if (!isValid) {
+    console.error(`❌ Inference scaling mismatch: ${computedScaling} vs ${expectedScaling}`)
+    console.error(`❌ Difference: ${Math.abs(computedScaling - expectedScaling)}`)
+  } else {
+    console.log(`✅ Inference scaling validation passed: ${computedScaling}`)
+  }
+
+  return isValid
+}
+
+/**
+ * Validate model inputs and outputs against reference
+ */
+function validateModelData(
+  modelInputs: Float16Array,
+  modelOutputs: Float32Array,
+  numChannels: number,
+  reference: ValidationReference,
+  tolerance: number = 1e-3,
+): boolean {
+  console.log('🔍 Validating model inputs and outputs...')
+
+  let isValid = true
+
+  // Check first N_VALIDATION_VALUES values of channel 0 model inputs
+  for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+    const modelInputValue = modelInputs[i]
+
+    if (Math.abs(modelInputValue - reference.sample_values.model_input_channel_0[i]) > tolerance) {
+      console.error(
+        `❌ Model input channel 0 value ${i} mismatch: ${modelInputValue} vs ${reference.sample_values.model_input_channel_0[i]}`,
+      )
+      isValid = false
+    }
+  }
+
+  // Check first N_VALIDATION_VALUES values of channel 0 model outputs
+  for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+    const modelOutputValue = modelOutputs[i]
+
+    if (
+      Math.abs(modelOutputValue - reference.sample_values.model_output_channel_0[i]) > tolerance
+    ) {
+      console.error(
+        `❌ Model output channel 0 value ${i} mismatch: ${modelOutputValue} vs ${reference.sample_values.model_output_channel_0[i]}`,
+      )
+      isValid = false
+    }
+  }
+
+  if (isValid) {
+    console.log('✅ Model inputs and outputs validation passed')
+  }
+
+  return isValid
+}
+
+/**
+ * Validate scaled values against reference
+ */
+function validateScaledValues(
+  scaledTraces: Float16Array,
+  reference: ValidationReference,
+  tolerance: number = 1e-3,
+): boolean {
+  console.log('🔍 Validating scaled values...')
+
+  let isValid = true
+
+  // Check first N_VALIDATION_VALUES values of channel 0
+  for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+    const scaledValue = scaledTraces[i]
+
+    if (Math.abs(scaledValue - reference.sample_values.scaled_channel_0[i]) > tolerance) {
+      console.error(
+        `❌ Scaled channel 0 value ${i} mismatch: ${scaledValue} vs ${reference.sample_values.scaled_channel_0[i]}`,
+      )
+      isValid = false
+    }
+  }
+
+  if (isValid) {
+    console.log('✅ Scaled values validation passed')
+  }
+
+  return isValid
+}
+
+/**
+ * Run comprehensive validation against reference data
+ */
+async function runValidationWithData(
+  modelsURL: string,
+  parameters: H5FileParameters,
+  inferenceScaling: number,
+  rawFrames: Uint16Array,
+  scaledTraces: Float16Array,
+  modelInputs: Float16Array,
+  modelOutputs: Float32Array,
+): Promise<boolean> {
+  console.log('🔍 Starting comprehensive validation...')
+
+  try {
+    // Load reference data
+    const response = await fetch(`${modelsURL}/test_maxwell_raw.validation.json`)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch reference data: ${response.statusText}`)
+    }
+    const reference = (await response.json()) as ValidationReference
+    console.log('📋 Loaded validation reference data')
+
+    let allValid = true
+
+    // 1. Validate H5 parameters
+    if (!validateH5Parameters(parameters, reference)) {
+      allValid = false
+    }
+
+    // 2. Validate raw values (first N values from channel 0)
+    if (!validateRawValues(rawFrames, parameters, reference)) {
+      allValid = false
+    }
+
+    // 3. Validate scaled values (first N values from channel 0)
+    if (!validateScaledValues(scaledTraces, reference)) {
+      allValid = false
+    }
+
+    // 4. Validate inference scaling
+    if (!validateInferenceScaling(inferenceScaling, reference)) {
+      allValid = false
+    }
+
+    // 5. Validate model inputs and outputs (first N values from channel 0)
+    if (!validateModelData(modelInputs, modelOutputs, parameters.numChannels, reference)) {
+      allValid = false
+    }
+
+    if (allValid) {
+      console.log('🎉 All validations passed!')
+    } else {
+      console.log('❌ Some validations failed!')
+    }
+
+    return allValid
+  } catch (error) {
+    console.warn('⚠️ Validation could not be completed:', error)
+    return false
+  }
+}
+
 /**
  * Run the detection model on the h5 file using streaming
  */
@@ -529,7 +840,15 @@ async function* runDetectionModel(
   parameters: H5FileParameters,
   inferenceScaling: number,
   detectSession: InferenceSession,
-): AsyncGenerator<{ output: Float32Array; duration: number }, void, unknown> {
+): AsyncGenerator<
+  {
+    output: Float32Array
+    duration: number
+    validationData?: { modelInputs: Float16Array; modelOutputs: Float32Array }
+  },
+  void,
+  unknown
+> {
   const sampleSize = 200
   const inputScale = 0.15887516
 
@@ -552,6 +871,8 @@ async function* runDetectionModel(
   let startTime = performance.now()
   let lastReportTime = startTime
   const reportInterval = 1000 // Report every 1 second
+
+  let isFirstWindow = true
 
   // Initialize h5wasm and handle mounting here
   const Module = await h5wasm.ready
@@ -690,9 +1011,27 @@ async function* runDetectionModel(
         totalToProcess: totalSamples,
       })
 
+      // Collect validation data only for the first window
+      let validationData: { modelInputs: Float16Array; modelOutputs: Float32Array } | undefined
+
+      if (isFirstWindow) {
+        // Extract first N_VALIDATION_VALUES from channel 0 for validation
+        const modelInputs = new Float16Array(N_VALIDATION_VALUES)
+        const modelOutputs = new Float32Array(N_VALIDATION_VALUES)
+
+        for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+          modelInputs[i] = processedData[i] // Channel 0 data
+          modelOutputs[i] = (results.output.data as Float32Array)[i] // Channel 0 output
+        }
+
+        validationData = { modelInputs, modelOutputs }
+        isFirstWindow = false
+      }
+
       yield {
         output: results.output.data as Float32Array,
         duration: windowDuration,
+        validationData,
       }
     }
 
@@ -743,7 +1082,7 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
     }
   } else if (event.data.type === 'run' && event.data.file) {
     console.log('Received runWithH5 message')
-    console.log('Model URL:', event.data.modelsURL)
+    console.log('Models URL:', event.data.modelsURL)
     console.log('H5 File:', event.data.file.name)
     console.log('Use GPU:', event.data.useGPU ?? false)
 
@@ -775,26 +1114,50 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
 
       // Calculate inference scaling from h5 file
       console.log('🔄 Calculating inference scaling from h5 file...')
-      const inferenceScalingValue = await calculateInferenceScalingFromH5(
-        event.data.file,
-        parameters,
-      )
+      const {
+        inferenceScaling: inferenceScalingValue,
+        rawFrames,
+        scaledTraces,
+      } = await calculateInferenceScalingFromH5WithValidation(event.data.file, parameters)
       console.log(`✅ Inference scaling computed: ${inferenceScalingValue}`)
 
       // Run detection model with h5 streaming
       console.log('🔄 Running detection model with h5 streaming...')
       const detectionResults: Float32Array[] = []
+      let firstWindowValidationData:
+        | { modelInputs: Float16Array; modelOutputs: Float32Array }
+        | undefined
 
-      for await (const { output } of runDetectionModel(
+      for await (const { output, validationData } of runDetectionModel(
         event.data.file,
         parameters,
         inferenceScalingValue,
         detectSession,
       )) {
         detectionResults.push(output)
+
+        // Capture validation data from first window
+        if (validationData && !firstWindowValidationData) {
+          firstWindowValidationData = validationData
+        }
       }
 
       console.log(`✅ Detection completed. Generated ${detectionResults.length} windows`)
+
+      // Run validation against reference data
+      console.log('🔍 Running validation against reference data...')
+      const validationPassed =
+        event.data.modelsURL && firstWindowValidationData
+          ? await runValidationWithData(
+              event.data.modelsURL,
+              parameters,
+              inferenceScalingValue,
+              rawFrames,
+              scaledTraces,
+              firstWindowValidationData.modelInputs,
+              firstWindowValidationData.modelOutputs,
+            )
+          : false
 
       // Send results back to main thread
       self.postMessage({
@@ -805,6 +1168,7 @@ self.addEventListener('message', async function (event: MessageEvent<PredictionM
           parameters,
           executionProvider: executionProviders[0],
           totalWindows: detectionResults.length,
+          validationPassed,
         },
       })
     } catch (error) {
