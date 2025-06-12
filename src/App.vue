@@ -254,13 +254,6 @@ const processingMode = ref<'cpu' | 'gpu'>('cpu')
 const gpuAvailable = ref(false)
 const currentStatus = ref('')
 const processingProgress = ref(0)
-const benchmarks = ref<{
-  avgTime: number
-  minTime: number
-  maxTime: number
-  provider: string
-  totalWindows: number
-} | null>(null)
 
 // New realtime capacity tracking
 const realtimeCapacity = ref<number | null>(null)
@@ -410,28 +403,6 @@ function initializeWorkers() {
       errorMessage.value = null
       const result = event.data.result
       console.log('Received result:', result)
-
-      // Store minimal result info
-      benchmarks.value = {
-        avgTime: 0,
-        minTime: 0,
-        maxTime: 0,
-        provider: result.executionProvider,
-        totalWindows: result.totalWindows,
-      }
-
-      // Verify inference scaling
-      console.log(`Expected inference scaling: 0.3761194050`)
-      const inferenceScalingMatch = Math.abs(result.inferenceScaling - 0.376119405) < 1e-6
-      console.log(`Inference scaling match: ${inferenceScalingMatch ? '✅ PERFECT' : '❌ FAILED'}`)
-
-      // Verify model outputs
-      // try {
-      //   const expectedModelOutputs = await loadExpectedModelOutputs()
-      //   await verifyModelOutputs(result.detectionOutputs, expectedModelOutputs)
-      // } catch (error) {
-      //   console.error('❌ Failed to verify model outputs:', error)
-      // }
     } else if (event.data.type === 'error') {
       running.value = false
       errorMessage.value = event.data.error
@@ -490,7 +461,6 @@ function handleRun() {
     // Use h5 workflow
     running.value = true
     errorMessage.value = null
-    benchmarks.value = null
     currentStatus.value = 'Starting spike detector with h5 file...'
     processingProgress.value = 0
     worker.value?.postMessage({
