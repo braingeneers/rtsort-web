@@ -565,6 +565,7 @@ interface ValidationReference {
     }
   }
   sample_values: {
+    raw_traces_before_scaling_channel_0: number[]
     raw_channel_0: number[]
     scaled_channel_0: number[]
     model_input_channel_0: number[]
@@ -623,6 +624,39 @@ function validateH5Parameters(
 
   if (isValid) {
     console.log('✅ H5 file parameters validation passed')
+  }
+
+  return isValid
+}
+
+/**
+ * Validate raw trace values (before scaling) against reference
+ */
+function validateRawTraceValues(
+  rawFrames: Uint16Array,
+  reference: ValidationReference,
+  tolerance: number = 1e-9,
+): boolean {
+  console.log('🔍 Validating raw trace values (before scaling)...')
+
+  let isValid = true
+
+  // Check first N_VALIDATION_VALUES values of channel 0
+  // Raw frames from h5wasm should match the raw traces before scaling from SpikeInterface
+  for (let i = 0; i < N_VALIDATION_VALUES; i++) {
+    const rawValue = rawFrames[i] // Direct uint16 value from h5 file
+    const expectedValue = reference.sample_values.raw_traces_before_scaling_channel_0[i]
+
+    if (Math.abs(rawValue - expectedValue) > tolerance) {
+      console.error(
+        `❌ Raw trace channel 0 value ${i} mismatch: ${rawValue} vs ${expectedValue}`,
+      )
+      isValid = false
+    }
+  }
+
+  if (isValid) {
+    console.log('✅ Raw trace values (before scaling) validation passed')
   }
 
   return isValid
@@ -744,7 +778,7 @@ function validateModelData(
 function validateScaledValues(
   scaledTraces: Float16Array,
   reference: ValidationReference,
-  tolerance: number = 1e-3,
+  tolerance: number = 1e-7,
 ): boolean {
   console.log('🔍 Validating scaled values...')
 
@@ -799,22 +833,27 @@ async function runValidationWithData(
       allValid = false
     }
 
-    // 2. Validate raw values (first N values from channel 0)
+    // 2. Validate raw trace values (before scaling)
+    if (!validateRawTraceValues(rawFrames, reference)) {
+      allValid = false
+    }
+
+    // 3. Validate raw values (first N values from channel 0)
     if (!validateRawValues(rawFrames, parameters, reference)) {
       allValid = false
     }
 
-    // 3. Validate scaled values (first N values from channel 0)
+    // 4. Validate scaled values (first N values from channel 0)
     if (!validateScaledValues(scaledTraces, reference)) {
       allValid = false
     }
 
-    // 4. Validate inference scaling
+    // 5. Validate inference scaling
     if (!validateInferenceScaling(inferenceScaling, reference)) {
       allValid = false
     }
 
-    // 5. Validate model inputs and outputs (first N values from channel 0)
+    // 6. Validate model inputs and outputs (first N values from channel 0)
     if (!validateModelData(modelInputs, modelOutputs, parameters.numChannels, reference)) {
       allValid = false
     }

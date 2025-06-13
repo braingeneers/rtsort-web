@@ -57,6 +57,18 @@
     }
   },
   "sample_values": {
+    "raw_traces_before_scaling_channel_0": [
+      513,
+      516,
+      509,
+      517,
+      511,
+      517,
+      514,
+      513,
+      519,
+      513
+    ],
     "raw_channel_0": [
       3228.0,
       3248.0,

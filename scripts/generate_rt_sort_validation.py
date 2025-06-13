@@ -73,6 +73,9 @@ def load_and_scale_raw_data(
         start_frame=start_sample, end_frame=start_sample + num_samples_to_read
     )
 
+    # Store raw traces before gain scaling for validation
+    raw_traces_before_scaling = traces.copy()
+
     # Apply channel gains manually (same as detect_sequences when has_scaleable_traces() is True)
     if recording.has_scaleable_traces():
         gains = recording.get_channel_gains()
@@ -80,11 +83,15 @@ def load_and_scale_raw_data(
 
     # Convert to the format that rt_sort.py expects: (channels, samples)
     traces = traces.T
+    raw_traces_before_scaling = raw_traces_before_scaling.T
 
     # Convert to float16 as rt_sort.py does
     scaled_traces = traces.astype(np.float16)
 
-    return scaled_traces  # Shape: (num_channels, num_samples)
+    return (
+        scaled_traces,
+        raw_traces_before_scaling,
+    )  # Shape: (num_channels, num_samples)
 
 
 def calculate_inference_scaling(
@@ -170,7 +177,7 @@ def generate_validation_data(
 
     # 2. Load and scale raw data
     print("Loading and scaling raw data...")
-    scaled_traces = load_and_scale_raw_data(
+    scaled_traces, raw_traces_before_scaling = load_and_scale_raw_data(
         h5_file_path,
         h5_params["num_channels"],
         num_samples_to_read=2000,  # Enough for inference scaling + model processing
@@ -235,6 +242,10 @@ def generate_validation_data(
         },
         # Reduced sample numerical values for validation (only 4 key data types)
         "sample_values": {
+            # 0) Raw values from h5 from channel 0 (before any scaling/gain application)
+            "raw_traces_before_scaling_channel_0": raw_traces_before_scaling[
+                0, :n_values
+            ].tolist(),
             # 1) Raw values from h5 from channel 0 (scaled traces are the "raw" values we use)
             "raw_channel_0": scaled_traces[0, :n_values].tolist(),
             # 2) Scaled values from channel 0 (same as raw in our case since we use SpikeInterface scaling)
