@@ -648,9 +648,7 @@ function validateRawTraceValues(
     const expectedValue = reference.sample_values.raw_traces_before_scaling_channel_0[i]
 
     if (Math.abs(rawValue - expectedValue) > tolerance) {
-      console.error(
-        `❌ Raw trace channel 0 value ${i} mismatch: ${rawValue} vs ${expectedValue}`,
-      )
+      console.error(`❌ Raw trace channel 0 value ${i} mismatch: ${rawValue} vs ${expectedValue}`)
       isValid = false
     }
   }
@@ -731,7 +729,6 @@ function validateInferenceScaling(
 function validateModelData(
   modelInputs: Float16Array,
   modelOutputs: Float32Array,
-  numChannels: number,
   reference: ValidationReference,
   tolerance: number = 1e-3,
 ): boolean {
@@ -854,7 +851,7 @@ async function runValidationWithData(
     }
 
     // 6. Validate model inputs and outputs (first N values from channel 0)
-    if (!validateModelData(modelInputs, modelOutputs, parameters.numChannels, reference)) {
+    if (!validateModelData(modelInputs, modelOutputs, reference)) {
       allValid = false
     }
 
