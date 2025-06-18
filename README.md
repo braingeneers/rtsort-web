@@ -1,21 +1,28 @@
 # rtsort-web
 
-Single page web application that detects and plots spikes in ephys data streamed from a .h5 file.
+Single page web application that runs [RTSort](https://braingeneers.github.io/braindance/docs/RT-sort/introduction) in the browser using [h5wasm](https://github.com/usnistgov/h5wasm) to stream local ephys data (.h5) files and [ONNX](https://onnxruntime.ai) to run the spike detetion model.
 
-[https://braingeneers.github.io/rtsort-web/](https://braingeneers.github.io/rtsort-web/)
+[Demo](https://braingeneers.github.io/rtsort-web)
 
-This is achieved by running [RTSort](https://braingeneers.github.io/braindance/docs/RT-sort/introduction) in the browser using [h5wasm](https://github.com/usnistgov/h5wasm) to read local ephys data (.h5) files and [ONNX](https://onnxruntime.ai/) to run the spike detetion model.
+![Alt text](screenshot.png?raw=true 'RT-Sort Web')
 
-# Install
+## Status
+
+Proof of concept that runs RT-Sort pre-processing and spike detection for raw [Maxell Biosystems](https://www.mxwbio.com) recordings. Pre-processing is currently in javascript and could easily be moved into ONNX improving performance. The model output concordant with RT-Sort python to 3 decimal places using the CPU and 1 decimal place using the M3 GPU (see the browser console for concordance details). Spike sorting is TBD. Tested in Chrome and Safari on a MacBook M3.
+
+## Install
+
+To run the [Vue](https://vuejs.org) based web application:
 
 ```
-python3.11 -m venv venv
-pip install -e ./braindance[rt-sort]
-
 npm install
 npm run dev
 ```
 
-# References
+To use the scripts to export a model to ONNX and subset files:
 
-[MEA Recordings](https://gin.g-node.org/NeuroGroup_TUNI/Comparative_MEA_dataset)
+```
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```

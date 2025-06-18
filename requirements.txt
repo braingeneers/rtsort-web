@@ -5,7 +5,8 @@ onnx
 onnxruntime
 
 # ./braindance[rt-sort]
--e file:../braindance[rt-sort]
+# -e file:../braindance[rt-sort]
+braindance[rt-sort]
 
 ipython
 jupyter

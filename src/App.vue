@@ -2,7 +2,34 @@
   <v-app theme="dark">
     <v-main>
       <v-container>
-        <h1>RT-Sort Web</h1>
+        <div class="d-flex align-center w-100">
+          <v-list-item-title class="text-h4 mr-auto">RT-Sort Web</v-list-item-title>
+          <v-btn
+            variant="text"
+            icon
+            size="small"
+            class="pa-0"
+            style="min-width: 28px"
+            href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0312438"
+            target="_blank"
+            aria-label="PLOS Paper"
+          >
+            <v-icon>mdi-newspaper</v-icon>
+          </v-btn>
+          <v-btn
+            icon
+            size="small"
+            variant="text"
+            class="pa-0"
+            style="min-width: 28px"
+            href="https://github.com/braingeneers/rtsort-web"
+            target="_blank"
+            aria-label="GitHub Repository"
+          >
+            <v-icon>mdi-github</v-icon>
+          </v-btn>
+        </div>
+
         <v-file-input
           v-model="selectedFile"
           data-cy="file-input"
